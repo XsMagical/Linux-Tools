@@ -24,10 +24,10 @@ LOG_FILE="${LOG_DIR}/post_install_$(date +%Y%m%d_%H%M%S).log"
 ASSUME_YES=false
 NO_FLATPAK=false
 DRY_RUN=false
-INSTALL_CHROME=${INSTALL_CHROME:-1}
 VERBOSE=false
+INSTALL_CHROME=${INSTALL_CHROME:-1}
 
-# Package manager shim for Fedora (dnf vs dnf5)
+# ---------- PM shims ----------
 DNF="dnf"
 if command -v dnf5 >/dev/null 2>&1; then DNF="dnf5"; fi
 
@@ -57,18 +57,16 @@ detect_distro() {
       fi
       ;;
   esac
-  if [[ "$DISTRO" == "unknown" ]]; then
-    die "Unsupported or unknown distro."
-  fi
+  if [[ "$DISTRO" == "unknown" ]]; then die "Unsupported or unknown distro."; fi
 }
 
-# Fedora group upgrade wrapper (handles dnf vs dnf5)
-dnf_group_upgrade() {
+# Fedora group upgrade wrapper (dnf vs dnf5) – used only for 'core'
+dnf_group_upgrade_core() {
   local yflag="$1"; shift
   if [[ "$DNF" = "dnf5" ]]; then
-    run $SUDO "$DNF" group upgrade $yflag "$@"
+    run $SUDO "$DNF" group upgrade $yflag core
   else
-    run $SUDO "$DNF" groupupdate $yflag "$@"
+    run $SUDO "$DNF" groupupdate $yflag core
   fi
 }
 
@@ -132,7 +130,7 @@ enable_repos_and_basics() {
       log "${BOLD}=> Enabling RPM Fusion (if missing)...${RESET}"
       rpm -q rpmfusion-free-release   &>/dev/null || run $SUDO "$DNF" install $y https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm
       rpm -q rpmfusion-nonfree-release&>/dev/null || run $SUDO "$DNF" install $y https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
-      dnf_group_upgrade "$y" core || true
+      dnf_group_upgrade_core "$y" || true
       ;;
     rhel)
       log "${BOLD}=> RHEL-like: enable EPEL/RPM Fusion per policy (not forced).${RESET}"
@@ -182,34 +180,71 @@ install_codecs_and_media_stack() {
   log "${BOLD}=> Installing media stack & codecs...${RESET}"
   case "$DISTRO" in
     fedora|rhel)
-      local y; $ASSUME_YES && y="-y" || y=""
-      dnf_group_upgrade "$y" multimedia --setop="install_weak_deps=False" --exclude=PackageKit-gstreamer-plugin || true
-      dnf_group_upgrade "$y" sound-and-video || true
-      ensure_pkgs vlc mpv celluloid ffmpeg handbrake
+      # dnf5 doesn't like old group args; install explicit packages instead
+      ensure_pkgs \
+        vlc mpv celluloid ffmpeg \
+        HandBrake-gui HandBrake-cli \
+        gstreamer1-plugins-good gstreamer1-plugins-bad-free gstreamer1-plugins-ugly-free gstreamer1-plugin-libav
       ;;
-    debian)   ensure_pkgs vlc mpv ffmpeg handbrake handbrake-cli ;;
-    arch)     ensure_pkgs vlc mpv ffmpeg handbrake ;;
-    opensuse) ensure_pkgs vlc mpv ffmpeg-5 gstreamer-plugins-bad gstreamer-plugins-ugly handbrake ;;
+    debian)
+      ensure_pkgs vlc mpv ffmpeg handbrake handbrake-cli
+      ;;
+    arch)
+      ensure_pkgs vlc mpv ffmpeg handbrake
+      ;;
+    opensuse)
+      ensure_pkgs vlc mpv ffmpeg-5 gstreamer-plugins-bad gstreamer-plugins-ugly handbrake
+      ;;
   esac
 }
 
 install_general_stack() {
   log "${BOLD}=> Installing general tools...${RESET}"
   case "$DISTRO" in
-    fedora|rhel) ensure_pkgs git curl wget unzip p7zip p7zip-plugins htop btop fastfetch gparted lm_sensors nvtop btrfs-progs util-linux-user tar jq fzf ripgrep ;;
-    debian)      ensure_pkgs git curl wget unzip p7zip-full htop btop fastfetch gparted lm-sensors nvtop btrfs-progs jq fzf ripgrep ;;
-    arch)        ensure_pkgs git curl wget unzip p7zip htop btop fastfetch gparted lm_sensors nvtop btrfs-progs jq fzf ripgrep ;;
-    opensuse)    ensure_pkgs git curl wget unzip p7zip htop btop fastfetch gparted lm_sensors nvtop btrfsprogs jq fzf ripgrep ;;
+    fedora|rhel)
+      ensure_pkgs git curl wget unzip p7zip p7zip-plugins htop btop fastfetch gparted \
+                  lm_sensors nvtop btrfs-progs util-linux-user tar jq fzf ripgrep
+      ;;
+    debian)
+      ensure_pkgs git curl wget unzip p7zip-full htop btop fastfetch gparted \
+                  lm-sensors nvtop btrfs-progs jq fzf ripgrep
+      ;;
+    arch)
+      ensure_pkgs git curl wget unzip p7zip htop btop fastfetch gparted \
+                  lm_sensors nvtop btrfs-progs jq fzf ripgrep
+      ;;
+    opensuse)
+      ensure_pkgs git curl wget unzip p7zip htop btop fastfetch gparted \
+                  lm_sensors nvtop btrfsprogs jq fzf ripgrep
+      ;;
   esac
 }
 
 install_dev_and_full_tools() {
   log "${BOLD}=> Installing developer & power-user tools...${RESET}"
   case "$DISTRO" in
-    fedora|rhel) ensure_pkgs gcc gcc-c++ make cmake ninja-build kernel-headers kernel-devel podman podman-compose distrobox toolbox virt-install virt-manager qemu-kvm libvirt-daemon-config-network flatpak-builder python3-pip ;;
-    debian)      ensure_pkgs build-essential cmake ninja-build "linux-headers-$(uname -r)" podman podman-compose distrobox virt-manager qemu-system qemu-kvm libvirt-daemon-system flatpak-builder python3-pip || true ;;
-    arch)        ensure_pkgs base-devel cmake ninja linux-headers podman podman-compose distrobox virt-manager qemu libvirt dnsmasq iptables-nft flatpak-builder python-pip ;;
-    opensuse)    ensure_pkgs gcc gcc-c++ make cmake ninja libvirt qemu-kvm virt-manager podman podman-compose distrobox flatpak-builder python311-pip ;;
+    fedora|rhel)
+      ensure_pkgs gcc gcc-c++ make cmake ninja-build kernel-headers kernel-devel \
+                  podman podman-compose distrobox toolbox \
+                  virt-install virt-manager qemu-kvm libvirt-daemon-config-network \
+                  flatpak-builder python3-pip
+      ;;
+    debian)
+      ensure_pkgs build-essential cmake ninja-build "linux-headers-$(uname -r)" \
+                  podman podman-compose distrobox \
+                  virt-manager qemu-system qemu-kvm libvirt-daemon-system \
+                  flatpak-builder python3-pip || true
+      ;;
+    arch)
+      ensure_pkgs base-devel cmake ninja linux-headers \
+                  podman podman-compose distrobox \
+                  virt-manager qemu libvirt dnsmasq iptables-nft \
+                  flatpak-builder python-pip
+      ;;
+    opensuse)
+      ensure_pkgs gcc gcc-c++ make cmake ninja libvirt qemu-kvm virt-manager \
+                  podman podman-compose distrobox flatpak-builder python311-pip
+      ;;
   esac
 
   if [[ "$INSTALL_CHROME" == "1" ]]; then
@@ -236,7 +271,7 @@ install_dev_and_full_tools() {
         fi
         ensure_pkgs google-chrome-stable || true
         ;;
-      arch) : ;;
+      arch) : ;; # avoid AUR in universal script
     esac
   fi
 }
