@@ -12,7 +12,7 @@ It offers ready-made presets for **Gaming**, **Media**, **General**, **Lite**, a
 
 > These commands save the script to `~/scripts/` so you can run it again later. Paste them exactly into your terminal.
 
-### 0) One-time download
+### One-time download
 ```bash
 mkdir -p ~/scripts
 cd ~/scripts
