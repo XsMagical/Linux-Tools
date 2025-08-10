@@ -27,6 +27,10 @@ DRY_RUN=false
 INSTALL_CHROME=${INSTALL_CHROME:-1}
 VERBOSE=false
 
+# Package manager shim for Fedora (dnf vs dnf5)
+DNF="dnf"
+if command -v dnf5 >/dev/null 2>&1; then DNF="dnf5"; fi
+
 # ---------- Helpers ----------
 log()  { printf "%b\n" "$1" | tee -a "$LOG_FILE"; }
 die()  { printf "%b\n" "${RED}Error:${RESET} $*" | tee -a "$LOG_FILE"; exit 1; }
@@ -58,6 +62,16 @@ detect_distro() {
   fi
 }
 
+# Fedora group upgrade wrapper (handles dnf vs dnf5)
+dnf_group_upgrade() {
+  local yflag="$1"; shift
+  if [[ "$DNF" = "dnf5" ]]; then
+    run $SUDO "$DNF" group upgrade $yflag "$@"
+  else
+    run $SUDO "$DNF" groupupdate $yflag "$@"
+  fi
+}
+
 pkg_installed() {
   local pkg="$1"
   case "$DISTRO" in
@@ -81,7 +95,7 @@ ensure_pkgs() {
   case "$DISTRO" in
     fedora|rhel)
       local y; $ASSUME_YES && y="-y" || y=""
-      run $SUDO dnf install $y --skip-broken --best --allowerasing "${to_install[@]}"
+      run $SUDO "$DNF" install $y --skip-broken --best --allowerasing "${to_install[@]}"
       ;;
     debian)
       local y; $ASSUME_YES && y="-y" || y=""
@@ -103,7 +117,7 @@ ensure_pkgs() {
 ensure_base_tools() {
   log "${BOLD}=> Ensuring base CLI/tools for this script...${RESET}"
   case "$DISTRO" in
-    fedora)   ensure_pkgs curl wget git ca-certificates gnupg unzip p7zip p7zip-plugins dnf-plugins-core ;;
+    fedora)   ensure_pkgs curl wget git ca-certificates gnupg2 unzip p7zip p7zip-plugins dnf5-plugins ;;
     rhel)     ensure_pkgs curl wget git ca-certificates gnupg2 unzip p7zip p7zip-plugins dnf-plugins-core epel-release ;;
     debian)   ensure_pkgs curl wget git ca-certificates gnupg unzip p7zip-full software-properties-common ;;
     arch)     ensure_pkgs curl wget git ca-certificates gnupg unzip p7zip pacman-contrib ;;
@@ -116,9 +130,9 @@ enable_repos_and_basics() {
     fedora)
       local y; $ASSUME_YES && y="-y" || y=""
       log "${BOLD}=> Enabling RPM Fusion (if missing)...${RESET}"
-      rpm -q rpmfusion-free-release   &>/dev/null || run $SUDO dnf install $y https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm
-      rpm -q rpmfusion-nonfree-release&>/dev/null || run $SUDO dnf install $y https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
-      run $SUDO dnf groupupdate $y core || true
+      rpm -q rpmfusion-free-release   &>/dev/null || run $SUDO "$DNF" install $y https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm
+      rpm -q rpmfusion-nonfree-release&>/dev/null || run $SUDO "$DNF" install $y https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
+      dnf_group_upgrade "$y" core || true
       ;;
     rhel)
       log "${BOLD}=> RHEL-like: enable EPEL/RPM Fusion per policy (not forced).${RESET}"
@@ -169,8 +183,8 @@ install_codecs_and_media_stack() {
   case "$DISTRO" in
     fedora|rhel)
       local y; $ASSUME_YES && y="-y" || y=""
-      run $SUDO dnf groupupdate $y multimedia --setop="install_weak_deps=False" --exclude=PackageKit-gstreamer-plugin || true
-      run $SUDO dnf groupupdate $y sound-and-video || true
+      dnf_group_upgrade "$y" multimedia --setop="install_weak_deps=False" --exclude=PackageKit-gstreamer-plugin || true
+      dnf_group_upgrade "$y" sound-and-video || true
       ensure_pkgs vlc mpv celluloid ffmpeg handbrake
       ;;
     debian)   ensure_pkgs vlc mpv ffmpeg handbrake handbrake-cli ;;
@@ -222,7 +236,7 @@ install_dev_and_full_tools() {
         fi
         ensure_pkgs google-chrome-stable || true
         ;;
-      arch) : ;; # skip AUR usage in a universal script
+      arch) : ;;
     esac
   fi
 }
