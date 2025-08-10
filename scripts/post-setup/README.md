@@ -8,40 +8,56 @@ It offers ready-made presets for **Gaming**, **Media**, **General**, **Lite**, a
 
 ---
 
-## 🚀 Quick Start (one-liners you can paste)
+## 🚀 Quick Start (wget-style copy & paste)
 
-> The script runs directly from GitHub — no clone needed. Pick a preset below and paste the command into your terminal.
+> These commands save the script to `~/scripts/` so you can run it again later. Paste them exactly into your terminal.
 
-### 🎮 Gaming
+### 0) One-time download
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/post-setup/tn_xs_post_install.sh) -y gaming
+mkdir -p ~/scripts
+cd ~/scripts
+wget -O tn_xs_post_install.sh https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/post-setup/tn_xs_post_install.sh
+chmod +x tn_xs_post_install.sh
 ```
 
-### 🎬 Media (VLC, MPV, Celluloid, FFmpeg, HandBrake, GStreamer codecs)
+### Run a preset (choose one)
+
+#### 🎮 Gaming
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/post-setup/tn_xs_post_install.sh) -y media
+~/scripts/tn_xs_post_install.sh -y gaming
 ```
 
-### 🛠️ General (everyday CLI tools)
+#### 🎬 Media (VLC, MPV, Celluloid, FFmpeg, HandBrake, GStreamer codecs)
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/post-setup/tn_xs_post_install.sh) -y general
+~/scripts/tn_xs_post_install.sh -y media
 ```
 
-### 🪶 Lite (minimal essentials)
+#### 🛠️ General (everyday CLI tools)
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/post-setup/tn_xs_post_install.sh) -y lite
+~/scripts/tn_xs_post_install.sh -y general
 ```
 
-### 🧰 Full (General + Media + Dev/Virtualization stack)
+#### 🪶 Lite (minimal essentials)
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/post-setup/tn_xs_post_install.sh) -y full
+~/scripts/tn_xs_post_install.sh -y lite
 ```
 
-> Need more output for troubleshooting? Add `--verbose` at the end of any command.
-
-**Example (Full + verbose):**
+#### 🧰 Full (General + Media + Dev/Virtualization stack)
 ```bash
-bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/post-setup/tn_xs_post_install.sh) -y --verbose full
+~/scripts/tn_xs_post_install.sh -y full
+```
+
+> Need more output for troubleshooting? Add `--verbose` to any command:
+```bash
+~/scripts/tn_xs_post_install.sh -y --verbose full
+```
+
+### 🔄 Update to the latest script later
+```bash
+cd ~/scripts
+rm -f tn_xs_post_install.sh
+wget -O tn_xs_post_install.sh https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/post-setup/tn_xs_post_install.sh
+chmod +x tn_xs_post_install.sh
 ```
 
 ---
