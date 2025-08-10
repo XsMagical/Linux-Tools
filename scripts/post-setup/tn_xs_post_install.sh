@@ -25,6 +25,7 @@ ASSUME_YES=false
 NO_FLATPAK=false
 DRY_RUN=false
 INSTALL_CHROME=${INSTALL_CHROME:-1}
+VERBOSE=false
 
 # ---------- Helpers ----------
 log()  { printf "%b\n" "$1" | tee -a "$LOG_FILE"; }
@@ -42,7 +43,7 @@ detect_distro() {
     ubuntu|debian|linuxmint|pop) DISTRO="debian" ;;
     arch|endeavouros|manjaro|arcolinux) DISTRO="arch" ;;
     opensuse*|sles|sle*) DISTRO="opensuse" ;;
-    *) 
+    *)
       if [[ "$ID_LIKE" == *fedora* ]]; then DISTRO="fedora"
       elif [[ "$ID_LIKE" == *rhel* ]]; then DISTRO="rhel"
       elif [[ "$ID_LIKE" == *debian* || "$ID_LIKE" == *ubuntu* ]]; then DISTRO="debian"
@@ -52,7 +53,9 @@ detect_distro() {
       fi
       ;;
   esac
-  [[ "$DISTRO" == "unknown" ]] && die "Unsupported or unknown distro."
+  if [[ "$DISTRO" == "unknown" ]]; then
+    die "Unsupported or unknown distro."
+  fi
 }
 
 pkg_installed() {
@@ -60,7 +63,7 @@ pkg_installed() {
   case "$DISTRO" in
     fedora|rhel|opensuse) rpm -q "$pkg" &>/dev/null ;;
     debian) dpkg -s "$pkg" &>/dev/null ;;
-    arch) pacman -Qi "$pkg" &>/dev/null ;;
+    arch)   pacman -Qi "$pkg" &>/dev/null ;;
   esac
 }
 
@@ -69,7 +72,7 @@ ensure_pkgs() {
   for pkg in "$@"; do
     [[ -z "$pkg" ]] && continue
     if pkg_installed "$pkg"; then
-      log "${DIM}✓ $pkg already installed${RESET}"
+      $VERBOSE && log "${DIM}✓ $pkg already installed${RESET}"
     else
       to_install+=("$pkg")
     fi
@@ -100,11 +103,11 @@ ensure_pkgs() {
 ensure_base_tools() {
   log "${BOLD}=> Ensuring base CLI/tools for this script...${RESET}"
   case "$DISTRO" in
-    fedora)    ensure_pkgs curl wget git ca-certificates gnupg unzip p7zip p7zip-plugins dnf-plugins-core ;;
-    rhel)      ensure_pkgs curl wget git ca-certificates gnupg2 unzip p7zip p7zip-plugins dnf-plugins-core epel-release ;;
-    debian)    ensure_pkgs curl wget git ca-certificates gnupg unzip p7zip-full software-properties-common ;;
-    arch)      ensure_pkgs curl wget git ca-certificates gnupg unzip p7zip pacman-contrib ;;
-    opensuse)  ensure_pkgs curl wget git ca-certificates gpg2 unzip p7zip ;;
+    fedora)   ensure_pkgs curl wget git ca-certificates gnupg unzip p7zip p7zip-plugins dnf-plugins-core ;;
+    rhel)     ensure_pkgs curl wget git ca-certificates gnupg2 unzip p7zip p7zip-plugins dnf-plugins-core epel-release ;;
+    debian)   ensure_pkgs curl wget git ca-certificates gnupg unzip p7zip-full software-properties-common ;;
+    arch)     ensure_pkgs curl wget git ca-certificates gnupg unzip p7zip pacman-contrib ;;
+    opensuse) ensure_pkgs curl wget git ca-certificates gpg2 unzip p7zip ;;
   esac
 }
 
@@ -112,31 +115,36 @@ enable_repos_and_basics() {
   case "$DISTRO" in
     fedora)
       local y; $ASSUME_YES && y="-y" || y=""
-      log "${BOLD}=> Enabling RPM Fusion...${RESET}"
-      rpm -q rpmfusion-free-release &>/dev/null || run $SUDO dnf install $y https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm
-      rpm -q rpmfusion-nonfree-release &>/dev/null || run $SUDO dnf install $y https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
+      log "${BOLD}=> Enabling RPM Fusion (if missing)...${RESET}"
+      rpm -q rpmfusion-free-release   &>/dev/null || run $SUDO dnf install $y https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm
+      rpm -q rpmfusion-nonfree-release&>/dev/null || run $SUDO dnf install $y https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
       run $SUDO dnf groupupdate $y core || true
       ;;
     rhel)
-      log "${BOLD}=> RHEL-like: ensure EPEL/RPM Fusion manually if needed.${RESET}"
+      log "${BOLD}=> RHEL-like: enable EPEL/RPM Fusion per policy (not forced).${RESET}"
       ;;
     debian)
-      log "${BOLD}=> Enabling contrib/non-free and updating...${RESET}"
-      $DRY_RUN || {
+      log "${BOLD}=> Enabling contrib/non-free & updating...${RESET}"
+      if ! $DRY_RUN; then
         $SUDO apt-get update || true
         add-apt-repository -y universe 2>/dev/null || true
         sed -i 's/main/main contrib non-free non-free-firmware/g' /etc/apt/sources.list || true
         $SUDO apt-get update || true
-      }
+      else
+        log "${DIM}[dry-run] would adjust sources.list and apt-get update${RESET}"
+      fi
       ;;
     arch)
-      log "${BOLD}=> Arch: consider enabling multilib manually.${RESET}"
+      log "${BOLD}=> Arch: consider enabling multilib in /etc/pacman.conf (manual).${RESET}"
       ;;
     opensuse)
       local y; $ASSUME_YES && y="-y" || y=""
+      log "${BOLD}=> Adding Packman (if missing)...${RESET}"
       if ! zypper lr | grep -qi packman; then
         run $SUDO zypper ar -cfp 90 https://ftp.gwdg.de/pub/linux/misc/packman/suse/openSUSE_Tumbleweed/ packman || true
         run $SUDO zypper refresh || true
+      else
+        $VERBOSE && log "${DIM}✓ Packman already present${RESET}"
       fi
       ;;
   esac
@@ -144,9 +152,15 @@ enable_repos_and_basics() {
   if ! $NO_FLATPAK; then
     log "${BOLD}=> Ensuring Flatpak & Flathub...${RESET}"
     ensure_pkgs flatpak || true
-    $DRY_RUN || {
-      flatpak remotes | grep -q '^flathub' || flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
-    }
+    if ! $DRY_RUN; then
+      if ! flatpak remotes | grep -q '^flathub'; then
+        flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo || true
+      else
+        $VERBOSE && log "${DIM}✓ Flathub already configured${RESET}"
+      fi
+    else
+      log "${DIM}[dry-run] flatpak remote-add flathub ...${RESET}"
+    fi
   fi
 }
 
@@ -159,9 +173,9 @@ install_codecs_and_media_stack() {
       run $SUDO dnf groupupdate $y sound-and-video || true
       ensure_pkgs vlc mpv celluloid ffmpeg handbrake
       ;;
-    debian)    ensure_pkgs vlc mpv ffmpeg handbrake handbrake-cli ;;
-    arch)      ensure_pkgs vlc mpv ffmpeg handbrake ;;
-    opensuse)  ensure_pkgs vlc mpv ffmpeg-5 gstreamer-plugins-bad gstreamer-plugins-ugly handbrake ;;
+    debian)   ensure_pkgs vlc mpv ffmpeg handbrake handbrake-cli ;;
+    arch)     ensure_pkgs vlc mpv ffmpeg handbrake ;;
+    opensuse) ensure_pkgs vlc mpv ffmpeg-5 gstreamer-plugins-bad gstreamer-plugins-ugly handbrake ;;
   esac
 }
 
@@ -183,6 +197,34 @@ install_dev_and_full_tools() {
     arch)        ensure_pkgs base-devel cmake ninja linux-headers podman podman-compose distrobox virt-manager qemu libvirt dnsmasq iptables-nft flatpak-builder python-pip ;;
     opensuse)    ensure_pkgs gcc gcc-c++ make cmake ninja libvirt qemu-kvm virt-manager podman podman-compose distrobox flatpak-builder python311-pip ;;
   esac
+
+  if [[ "$INSTALL_CHROME" == "1" ]]; then
+    log "${BOLD}=> Optional: Google Chrome${RESET}"
+    case "$DISTRO" in
+      fedora|rhel)
+        local y; $ASSUME_YES && y="-y" || y=""
+        if [[ ! -f /etc/yum.repos.d/google-chrome.repo ]]; then
+          run bash -c 'echo -e "[google-chrome]\nname=google-chrome\nbaseurl=http://dl.google.com/linux/chrome/rpm/stable/\$basearch\nenabled=1\ngpgcheck=1\ngpgkey=https://dl.google.com/linux/linux_signing_key.pub" | sudo tee /etc/yum.repos.d/google-chrome.repo >/dev/null'
+        fi
+        ensure_pkgs google-chrome-stable || true
+        ;;
+      debian)
+        tmpdeb="$(mktemp --suffix=.deb)"
+        run bash -c "curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -o '${tmpdeb}'"
+        local y; $ASSUME_YES && y="-y" || y=""
+        run $SUDO apt-get install $y ./${tmpdeb} || true
+        run rm -f "${tmpdeb}"
+        ;;
+      opensuse)
+        if ! zypper lr | grep -qi google-chrome; then
+          run $SUDO zypper ar -cfp 98 https://dl.google.com/linux/chrome/rpm/stable/x86_64 google-chrome || true
+          run $SUDO rpm --import https://dl.google.com/linux/linux_signing_key.pub || true
+        fi
+        ensure_pkgs google-chrome-stable || true
+        ;;
+      arch) : ;; # skip AUR usage in a universal script
+    esac
+  fi
 }
 
 install_lite_stack() {
@@ -193,11 +235,19 @@ install_lite_stack() {
 run_gaming_chain() {
   log "${BOLD}=> Running gaming setup from repo...${RESET}"
   local gscript="${HOME}/scripts/universal_gaming_setup.sh"
-  [[ -f "$gscript" ]] || { log "Downloading gaming script..."; run curl -fsSL "$GAMING_SCRIPT_URL" -o "$gscript"; run chmod +x "$gscript"; }
+  if [[ ! -f "$gscript" ]]; then
+    log "Downloading gaming script to ${gscript} ..."
+    run curl -fsSL "$GAMING_SCRIPT_URL" -o "$gscript"
+    run chmod +x "$gscript"
+  fi
   local fwd=""
   $ASSUME_YES && fwd="${fwd} --yes"
   $NO_FLATPAK && fwd="${fwd} --no-flatpak"
-  $DRY_RUN || run "$gscript" $fwd
+  if $DRY_RUN; then
+    log "${DIM}[dry-run] ${gscript} ${fwd}${RESET}"
+  else
+    run "$gscript" $fwd
+  fi
 }
 
 usage() {
@@ -215,6 +265,7 @@ Options:
   -y, --yes        Assume yes / non-interactive
       --no-flatpak Skip Flatpak/Flathub setup
       --dry-run    Show actions without executing
+      --verbose    Print extra details
   -h, --help       Show help
 USAGE
 }
@@ -227,6 +278,7 @@ while [[ $# -gt 0 ]]; do
     -y|--yes) ASSUME_YES=true; shift ;;
     --no-flatpak) NO_FLATPAK=true; shift ;;
     --dry-run) DRY_RUN=true; shift ;;
+    --verbose) VERBOSE=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) die "Unknown argument: $1 (see --help)";;
   esac
@@ -241,6 +293,7 @@ need_sudo
 detect_distro
 ensure_base_tools
 log "Detected distro: ${BOLD}${DISTRO}${RESET}"
+log "Preset: ${BOLD}${PRESET}${RESET}"
 enable_repos_and_basics
 
 case "$PRESET" in
