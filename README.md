@@ -6,7 +6,7 @@ About
 
 I’m a Team Nocturnal developer who started in the Android AOSP scene back in 2010, building and maintaining custom ROMs and tools for the Android modding community. 
 Over the years, I’ve shifted focus from Android to Linux, carrying the same goal forward: to make advanced customization and optimization easier for everyone.
-Fedora-Tools is my collection of scripts for Linux that automate tedious tasks, speed up system maintenance, and add features that power users expect. 
+Linux-Tools is my collection of scripts for Linux that automate tedious tasks, speed up system maintenance, and add features that power users expect. 
 
 
 GitHub Profile: https://github.com/XsMagical
