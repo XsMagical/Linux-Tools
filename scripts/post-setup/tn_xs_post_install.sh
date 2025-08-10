@@ -25,13 +25,11 @@ START_TS="$(date +%Y%m%d_%H%M%S)"
 LOG_DIR="${HOME}/scripts/logs"
 LOG_FILE="${LOG_DIR}/post_install_${START_TS}.log"
 mkdir -p "${LOG_DIR}"
-# Log all output to file and console
-exec > >(tee -a "${LOG_FILE}") 2>&1
+exec > >(tee -a "${LOG_FILE}") 2>&1  # Log all output to console + file
 
 # ================== Globals / CLI ==================
 ASSUME_YES=0
 VERBOSE=0
-NO_CHROME=0
 PRESET=""
 
 checkmark(){ printf "%b\n" "${GREEN}✅${RESET} $*"; }
@@ -46,27 +44,25 @@ Usage: $(basename "$0") [options] <preset>
 
 Presets:
   gaming   - Run universal gaming setup (fetches from GitHub if missing)
-  media    - Install VLC, MPV, Celluloid, ffmpeg, HandBrake, GStreamer codecs
+  media    - Install VLC, MPV, Celluloid, FFmpeg, HandBrake, GStreamer codecs
   general  - Common CLI tools/utilities
   lite     - Minimal essentials
   full     - general + media + dev/virtualization stack
 
 Options:
   -y, --assume-yes   Auto-confirm installs
-      --no-chrome    Skip Google Chrome
       --verbose      Extra status output
   -h, --help         Show this help
 
 Examples:
   $(basename "$0") --verbose -y full
-  $(basename "$0") --no-chrome media
+  $(basename "$0") media
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -y|--assume-yes) ASSUME_YES=1; shift ;;
-    --no-chrome)     NO_CHROME=1; shift ;;
     --verbose)       VERBOSE=1; shift ;;
     -h|--help)       usage; exit 0 ;;
     gaming|media|general|lite|full) PRESET="$1"; shift ;;
@@ -97,26 +93,23 @@ fi
 info "Detected distro: ${DISTRO}"
 
 # ================== Package Manager Abstractions ==================
-# Fedora/RHEL safety flags for installs
 DNF_FLAGS=(--best --allowerasing --skip-broken)
 
 pm_refresh() {
   case "$DISTRO" in
-    fedora) ${SUDO} sh -c 'command -v dnf5 &>/dev/null && dnf5 -q makecache || dnf -q makecache' || true ;;
-    debian) ${SUDO} apt-get update -y || true ;;
-    arch)   ${SUDO} pacman -Sy --noconfirm || true ;;
+    fedora)   ${SUDO} sh -c 'command -v dnf5 &>/dev/null && dnf5 -q makecache || dnf -q makecache' || true ;;
+    debian)   ${SUDO} apt-get update -y || true ;;
+    arch)     ${SUDO} pacman -Sy --noconfirm || true ;;
     opensuse) ${SUDO} zypper --non-interactive refresh || true ;;
     *) true ;;
   esac
 }
 
 pm_install() {
-  # Args: packages...
   local pkgs=("$@"); [[ ${#pkgs[@]} -eq 0 ]] && return 0
   case "$DISTRO" in
     fedora)
-      local args=()
-      [[ $ASSUME_YES -eq 1 ]] && args+=(-y)
+      local args=(); [[ $ASSUME_YES -eq 1 ]] && args+=(-y)
       if command -v dnf5 &>/dev/null; then
         ${SUDO} dnf5 install "${DNF_FLAGS[@]}" "${args[@]}" "${pkgs[@]}" || true
       else
@@ -124,23 +117,19 @@ pm_install() {
       fi
       ;;
     debian)
-      local args=()
-      [[ $ASSUME_YES -eq 1 ]] && args+=(-y)
+      local args=(); [[ $ASSUME_YES -eq 1 ]] && args+=(-y)
       ${SUDO} apt-get install "${args[@]}" "${pkgs[@]}" || true
       ;;
     arch)
-      local args=(--needed)
-      [[ $ASSUME_YES -eq 1 ]] && args+=(--noconfirm)
+      local args=(--needed); [[ $ASSUME_YES -eq 1 ]] && args+=(--noconfirm)
       ${SUDO} pacman -S "${args[@]}" "${pkgs[@]}" || true
       ;;
     opensuse)
-      local args=(--non-interactive)
-      [[ $ASSUME_YES -eq 1 ]] && args+=(-y)
+      local args=(--non-interactive); [[ $ASSUME_YES -eq 1 ]] && args+=(-y)
       ${SUDO} zypper "${args[@]}" install "${pkgs[@]}" || true
       ;;
     *)
-      warn "Unsupported distro for package install. Skipping: ${pkgs[*]}"
-      ;;
+      warn "Unsupported distro for package install. Skipping: ${pkgs[*]}";;
   esac
 }
 
@@ -152,8 +141,8 @@ pkg_installed() {
       { command -v dnf5 &>/dev/null && dnf5 -q list installed "$pkg" &>/dev/null; } || \
       { command -v dnf  &>/dev/null && dnf  -q list installed "$pkg" &>/dev/null; }
       ;;
-    debian) dpkg -s "$pkg" &>/dev/null ;;
-    arch)   pacman -Qi "$pkg" &>/dev/null ;;
+    debian)   dpkg -s "$pkg" &>/dev/null ;;
+    arch)     pacman -Qi "$pkg" &>/dev/null ;;
     opensuse) rpm -q "$pkg" &>/dev/null ;;
     *) return 1 ;;
   esac
@@ -191,84 +180,37 @@ add_general_packages() {
   esac
 }
 
-add_lite_packages() {
-  PKGS+=(curl wget git vim htop unzip)
-}
+add_lite_packages() { PKGS+=(curl wget git vim htop unzip); }
 
 add_media_packages() {
   case "$DISTRO" in
     fedora)
-      PKGS+=(
-        vlc mpv celluloid ffmpeg HandBrake-gui HandBrake-cli
-        gstreamer1-plugins-good gstreamer1-plugins-bad-free gstreamer1-plugins-ugly
-        gstreamer1-plugins-bad-freeworld gstreamer1-libav
-      )
+      PKGS+=( vlc mpv celluloid ffmpeg HandBrake-gui HandBrake-cli
+              gstreamer1-plugins-good gstreamer1-plugins-bad-free gstreamer1-plugins-ugly
+              gstreamer1-plugins-bad-freeworld gstreamer1-libav )
       ;;
     debian)
-      PKGS+=(
-        vlc mpv celluloid ffmpeg handbrake
-        gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad
-        gstreamer1.0-plugins-ugly gstreamer1.0-libav
-        libavcodec-extra
-      )
+      PKGS+=( vlc mpv celluloid ffmpeg handbrake
+              gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad
+              gstreamer1.0-plugins-ugly gstreamer1.0-libav libavcodec-extra )
       ;;
     arch)
-      PKGS+=(
-        vlc mpv celluloid ffmpeg handbrake
-        gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly gst-libav
-      )
+      PKGS+=( vlc mpv celluloid ffmpeg handbrake
+              gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly gst-libav )
       ;;
     opensuse)
-      PKGS+=(
-        vlc mpv celluloid ffmpeg HandBrake
-        gstreamer-plugins-base gstreamer-plugins-good gstreamer-plugins-bad gstreamer-plugins-ugly gstreamer-libav
-      )
+      PKGS+=( vlc mpv celluloid ffmpeg HandBrake
+              gstreamer-plugins-base gstreamer-plugins-good gstreamer-plugins-bad gstreamer-plugins-ugly gstreamer-libav )
       ;;
   esac
 }
 
 add_devvirt_packages() {
   case "$DISTRO" in
-    fedora)
-      PKGS+=( gcc make cmake clang pkgconf kernel-headers kernel-devel
-              qemu-kvm libvirt virt-install virt-manager edk2-ovmf )
-      ;;
-    debian)
-      PKGS+=( build-essential "linux-headers-$(uname -r)"
-              qemu-kvm libvirt-daemon-system libvirt-clients virtinst virt-manager ovmf )
-      ;;
-    arch)
-      PKGS+=( base-devel clang cmake qemu libvirt virt-manager edk2-ovmf )
-      ;;
-    opensuse)
-      PKGS+=( gcc make cmake clang kernel-default-devel
-              qemu-x86 libvirt virt-install virt-manager ovmf )
-      ;;
-  esac
-}
-
-# ================== Chrome (Optional) ==================
-install_chrome_optional() {
-  [[ $NO_CHROME -eq 1 ]] && { info "Chrome skipped by --no-chrome"; return 0; }
-  step "Attempting optional Google Chrome install (skips silently if unavailable)"
-  case "$DISTRO" in
-    fedora)
-      # If the repo exists, install. Otherwise try to enable it, then install. All best-effort.
-      if ! pkg_installed google-chrome-stable; then
-        pm_install fedora-workstation-repositories
-        ${SUDO} sh -c 'command -v dnf5 &>/dev/null && dnf5 config-manager --set-enabled google-chrome || dnf config-manager --set-enabled google-chrome' || true
-        pm_install google-chrome-stable || warn "Chrome not available; skipping"
-      else
-        checkmark "Chrome already installed"
-      fi
-      ;;
-    debian)
-      # Only install if package is already available from user's repos; otherwise skip.
-      ${SUDO} apt-cache policy google-chrome-stable &>/dev/null
-      if [[ $? -eq 0 ]]; then pm_install google-chrome-stable || warn "Chrome not available; skipping"
-      else warn "No Chrome repo found; skipping"; fi
-      ;;
-    arch|opensuse|*) warn "Chrome setup not defined for ${DISTRO}; skipping" ;;
+    fedora)   PKGS+=( gcc make cmake clang pkgconf kernel-headers kernel-devel qemu-kvm libvirt virt-install virt-manager edk2-ovmf ) ;;
+    debian)   PKGS+=( build-essential "linux-headers-$(uname -r)" qemu-kvm libvirt-daemon-system libvirt-clients virtinst virt-manager ovmf ) ;;
+    arch)     PKGS+=( base-devel clang cmake qemu libvirt virt-manager edk2-ovmf ) ;;
+    opensuse) PKGS+=( gcc make cmake clang kernel-default-devel qemu-x86 libvirt virt-install virt-manager ovmf ) ;;
   esac
 }
 
@@ -282,17 +224,9 @@ run_gaming_preset() {
     curl -fsSL "https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/gaming/universal_gaming_setup.sh" -o "$local_script" || true
     chmod +x "$local_script" || true
   fi
-
   if [[ -x "$local_script" ]]; then
-    local args=()
-    [[ $ASSUME_YES -eq 1 ]] && args+=("-y")
-    [[ $VERBOSE -eq 1 ]] && args+=("--verbose")
-    "$local_script" "${args[@]}"
-    rc=$?
-    if (( rc != 0 )); then
-      warn "Gaming script returned ${rc}; retrying without flags..."
-      "$local_script"
-    fi
+    local args=(); [[ $ASSUME_YES -eq 1 ]] && args+=("-y"); [[ $VERBOSE -eq 1 ]] && args+=("--verbose")
+    "$local_script" "${args[@]}" || { warn "Gaming script returned non-zero; retrying without flags"; "$local_script"; }
     checkmark "Gaming preset completed (see above for details)"
   else
     crossmark "Could not obtain universal_gaming_setup.sh"
@@ -309,10 +243,8 @@ run_full_preset() {
   PKGS=(); add_devvirt_packages; pm_refresh; pm_install "${PKGS[@]}"; checkmark "Dev/Virtualization stack attempted"
 }
 
-# ================== Pre-flight (Fedora Codecs Repo) ==================
-if [[ "$DISTRO" == "fedora" ]]; then
-  enable_rpmfusion
-fi
+# ================== Pre-flight (Fedora) ==================
+[[ "$DISTRO" == "fedora" ]] && enable_rpmfusion
 
 # ================== Execute Selected Preset ==================
 case "$PRESET" in
@@ -322,9 +254,6 @@ case "$PRESET" in
   lite)    run_lite_preset ;;
   full)    run_full_preset ;;
 esac
-
-# ================== Optional Bits ==================
-install_chrome_optional
 
 echo
 checkmark "Post-install complete. Log: ${LOG_FILE}"
