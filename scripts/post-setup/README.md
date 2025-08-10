@@ -8,56 +8,40 @@ It offers ready-made presets for **Gaming**, **Media**, **General**, **Lite**, a
 
 ---
 
-## 🚀 Quick Start (wget-style copy & paste)
+## 🚀 Quick Start (one-liners you can paste)
 
-> These commands save the script to `~/scripts/` so you can run it again later. Paste them exactly into your terminal.
+> The script runs directly from GitHub — no clone needed. Pick a preset below and paste the command into your terminal.
 
-### One-time download
+### 🎮 Gaming
 ```bash
-mkdir -p ~/scripts
-cd ~/scripts
-wget -O tn_xs_post_install.sh https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/post-setup/tn_xs_post_install.sh
-chmod +x tn_xs_post_install.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/post-setup/tn_xs_post_install.sh) -y gaming
 ```
 
-### Run a preset (choose one)
-
-#### 🎮 Gaming
+### 🎬 Media (VLC, MPV, Celluloid, FFmpeg, HandBrake, GStreamer codecs)
 ```bash
-~/scripts/tn_xs_post_install.sh -y gaming
+bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/post-setup/tn_xs_post_install.sh) -y media
 ```
 
-#### 🎬 Media (VLC, MPV, Celluloid, FFmpeg, HandBrake, GStreamer codecs)
+### 🛠️ General (everyday CLI tools)
 ```bash
-~/scripts/tn_xs_post_install.sh -y media
+bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/post-setup/tn_xs_post_install.sh) -y general
 ```
 
-#### 🛠️ General (everyday CLI tools)
+### 🪶 Lite (minimal essentials)
 ```bash
-~/scripts/tn_xs_post_install.sh -y general
+bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/post-setup/tn_xs_post_install.sh) -y lite
 ```
 
-#### 🪶 Lite (minimal essentials)
+### 🧰 Full (General + Media + Dev/Virtualization stack)
 ```bash
-~/scripts/tn_xs_post_install.sh -y lite
+bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/post-setup/tn_xs_post_install.sh) -y full
 ```
 
-#### 🧰 Full (General + Media + Dev/Virtualization stack)
-```bash
-~/scripts/tn_xs_post_install.sh -y full
-```
+> Need more output for troubleshooting? Add `--verbose` at the end of any command.
 
-> Need more output for troubleshooting? Add `--verbose` to any command:
+**Example (Full + verbose):**
 ```bash
-~/scripts/tn_xs_post_install.sh -y --verbose full
-```
-
-### 🔄 Update to the latest script later
-```bash
-cd ~/scripts
-rm -f tn_xs_post_install.sh
-wget -O tn_xs_post_install.sh https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/post-setup/tn_xs_post_install.sh
-chmod +x tn_xs_post_install.sh
+bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/post-setup/tn_xs_post_install.sh) -y --verbose full
 ```
 
 ---

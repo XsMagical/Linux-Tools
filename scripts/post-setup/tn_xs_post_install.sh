@@ -18,14 +18,14 @@ print_banner() {
 }
 
 # ================== Script Settings ==================
-set +e                                   # Do NOT exit on first error
-trap 'echo "Error on line $LINENO"' ERR  # Log error line, keep going
+set +e
+trap 'echo "Error on line $LINENO"' ERR
 
 START_TS="$(date +%Y%m%d_%H%M%S)"
 LOG_DIR="${HOME}/scripts/logs"
 LOG_FILE="${LOG_DIR}/post_install_${START_TS}.log"
 mkdir -p "${LOG_DIR}"
-exec > >(tee -a "${LOG_FILE}") 2>&1  # Log all output to console + file
+exec > >(tee -a "${LOG_FILE}") 2>&1
 
 # ================== Globals / CLI ==================
 ASSUME_YES=0
@@ -39,7 +39,7 @@ info(){       printf "%b\n" "${BLUE}ℹ${RESET}  $*"; }
 step(){       printf "%b\n" "${BOLD}${BLUE}==>${RESET} $*"; }
 
 usage() {
-  cat <<EOF
+  cat <<EOF2
 Usage: $(basename "$0") [options] <preset>
 
 Presets:
@@ -57,7 +57,7 @@ Options:
 Examples:
   $(basename "$0") --verbose -y full
   $(basename "$0") media
-EOF
+EOF2
 }
 
 while [[ $# -gt 0 ]]; do
@@ -224,9 +224,14 @@ run_gaming_preset() {
     curl -fsSL "https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/gaming/universal_gaming_setup.sh" -o "$local_script" || true
     chmod +x "$local_script" || true
   fi
+
   if [[ -x "$local_script" ]]; then
-    local args=(); [[ $ASSUME_YES -eq 1 ]] && args+=("-y"); [[ $VERBOSE -eq 1 ]] && args+=("--verbose")
-    "$local_script" "${args[@]}" || { warn "Gaming script returned non-zero; retrying without flags"; "$local_script"; }
+    # IMPORTANT: run via sudo; do NOT pass -y/--verbose (gaming script doesn't accept them and uses runuser)
+    ${SUDO:-sudo} "$local_script"
+    rc=$?
+    if (( rc != 0 )); then
+      warn "Gaming script returned ${rc}"
+    fi
     checkmark "Gaming preset completed (see above for details)"
   else
     crossmark "Could not obtain universal_gaming_setup.sh"
