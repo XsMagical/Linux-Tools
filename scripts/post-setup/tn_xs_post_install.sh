@@ -190,23 +190,28 @@ add_media_packages() {
     fedora)
       PKGS+=( vlc mpv celluloid ffmpeg HandBrake-gui HandBrake-cli
               gstreamer1-plugins-good gstreamer1-plugins-bad-free gstreamer1-plugins-ugly
-              gstreamer1-plugins-bad-freeworld gstreamer1-libav )
+              gstreamer1-plugins-bad-freeworld gstreamer1-libav
+              qbittorrent )
       ;;
     debian)
       PKGS+=( vlc mpv celluloid ffmpeg handbrake
               gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad
-              gstreamer1.0-plugins-ugly gstreamer1.0-libav libavcodec-extra )
+              gstreamer1.0-plugins-ugly gstreamer1.0-libav libavcodec-extra
+              qbittorrent )
       ;;
     arch)
       PKGS+=( vlc mpv celluloid ffmpeg handbrake
-              gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly gst-libav )
+              gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugins-ugly gst-libav
+              qbittorrent )
       ;;
     opensuse)
       PKGS+=( vlc mpv celluloid ffmpeg HandBrake
-              gstreamer-plugins-base gstreamer-plugins-good gstreamer-plugins-bad gstreamer-plugins-ugly gstreamer-libav )
+              gstreamer-plugins-base gstreamer-plugins-good gstreamer-plugins-bad gstreamer-plugins-ugly gstreamer-libav
+              qbittorrent )
       ;;
   esac
 }
+
 
 add_devvirt_packages() {
   case "$DISTRO" in
@@ -248,10 +253,12 @@ run_lite_preset()    { PKGS=(); add_lite_packages;    pm_refresh; pm_install "${
 run_full_preset() {
   run_general_preset
   run_media_preset
-  PKGS=(); add_devvirt_packages; pm_refresh; pm_install "${PKGS[@]}"
+
+  PKGS=(); add_devvirt_packages
+  PKGS+=(qbittorrent)  # <-- Ensure qBittorrent is included in Full
+  pm_refresh; pm_install "${PKGS[@]}"
 
   # Libvirt/Virt-Manager post-setup (Fedora/RHEL & friends)
-  # Keep going even if any unit isn't present (|| true).
   step "Configuring libvirt (sockets, groups, default network)"
   ${SUDO} systemctl enable --now virtqemud.socket virtqemud-ro.socket virtqemud-admin.socket || true
   ${SUDO} systemctl enable --now virtlogd.socket virtlockd.socket || true
@@ -267,6 +274,7 @@ run_full_preset() {
 
   checkmark "Dev/Virtualization stack attempted"
 }
+
 
 
 # ================== Pre-flight (Fedora) ==================
