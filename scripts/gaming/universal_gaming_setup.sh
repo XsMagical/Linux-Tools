@@ -1,3 +1,30 @@
+# === Overlay Control (can be combined with other flags) ===
+for arg in "$@"; do
+  case "$arg" in
+    --overlays=system)
+      echo "Enabling MangoHud system-wide...";
+      sudo mkdir -p /etc/MangoHud;
+      sudo tee /etc/MangoHud/MangoHud.conf >/dev/null <<EOF
+gpu_stats
+gpu_temp
+EOF
+      ;;
+    --overlays=steam)
+      echo "Enabling MangoHud for Steam only...";
+      mkdir -p ~/.steam/steam/compatibilitytools.d/MangoHud;
+      tee ~/.steam/steam/compatibilitytools.d/MangoHud/MangoHud.conf >/dev/null <<EOF
+gpu_stats
+gpu_temp
+EOF
+      ;;
+    --overlays=none)
+      echo "Disabling MangoHud overlays...";
+      rm -f ~/.steam/steam/compatibilitytools.d/MangoHud/MangoHud.conf;
+      sudo rm -f /etc/MangoHud/MangoHud.conf;
+      ;;
+  esac;
+done
+
 #!/usr/bin/env bash
 #
 # Fedora Gaming Setup Script (Universal) - by XsMagical
