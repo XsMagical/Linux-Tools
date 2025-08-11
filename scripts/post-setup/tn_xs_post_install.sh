@@ -254,26 +254,45 @@ run_full_preset() {
   run_general_preset
   run_media_preset
 
+  # Dev/Virtualization stack + ensure qBittorrent is included in Full
   PKGS=(); add_devvirt_packages
-  PKGS+=(qbittorrent)  # <-- Ensure qBittorrent is included in Full
+  PKGS+=(qbittorrent)
   pm_refresh; pm_install "${PKGS[@]}"
 
-  # Libvirt/Virt-Manager post-setup (Fedora/RHEL & friends)
+  # Libvirt/Virt-Manager post-setup (cross-distro safe)
   step "Configuring libvirt (sockets, groups, default network)"
-  ${SUDO} systemctl enable --now virtqemud.socket virtqemud-ro.socket virtqemud-admin.socket || true
-  ${SUDO} systemctl enable --now virtlogd.socket virtlockd.socket || true
-  ${SUDO} systemctl enable --now libvirtd || true
 
-  # Allow current user to manage VMs (re-login required to take effect)
+  # If there's no systemd, skip gracefully
+  if ! command -v systemctl >/dev/null 2>&1; then
+    warn "systemd not found; skipping libvirt setup"
+    checkmark "Dev/Virtualization stack attempted"
+    return 0
+  fi
+
+  # Enable logging/locking sockets if they exist
+  systemctl list-unit-files --type=socket | grep -q '^virtlogd\.socket'  && ${SUDO} systemctl enable --now virtlogd.socket  || true
+  systemctl list-unit-files --type=socket | grep -q '^virtlockd\.socket' && ${SUDO} systemctl enable --now virtlockd.socket || true
+
+  # Fedora/RHEL (modular daemons) vs Debian/Ubuntu/openSUSE/Arch (monolithic libvirtd)
+  if systemctl list-unit-files --type=socket | grep -q '^virtqemud\.socket'; then
+    # Modular
+    ${SUDO} systemctl enable --now virtqemud.socket virtqemud-ro.socket virtqemud-admin.socket || true
+  else
+    # Monolithic
+    ${SUDO} systemctl enable --now libvirtd.socket libvirtd.service || true
+  fi
+
+  # Allow current user to manage VMs (re-login needed to take effect)
   ${SUDO} usermod -aG libvirt "$USER" || true
-  ${SUDO} usermod -aG kvm "$USER" || true
+  ${SUDO} usermod -aG kvm "$USER"     || true
 
   # Ensure the default NAT network exists and autostarts
   ${SUDO} virsh net-autostart default 2>/dev/null || true
-  ${SUDO} virsh net-start default 2>/dev/null || true
+  ${SUDO} virsh net-start     default 2>/dev/null || true
 
   checkmark "Dev/Virtualization stack attempted"
 }
+
 
 
 
