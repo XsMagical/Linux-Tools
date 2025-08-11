@@ -8,6 +8,33 @@ It offers ready-made presets for **Gaming**, **Media**, **General**, **Lite**, a
 
 ---
 
+## ⚠️ Heads-up: if `wget` isn’t installed
+
+Some fresh installs don’t include `wget`. If the commands below fail with “wget: command not found”, install it first:
+
+**Fedora / RHEL (dnf or dnf5)**
+```bash
+sudo dnf install -y wget    # or: sudo dnf5 install -y wget
+```
+
+**Ubuntu / Debian**
+```bash
+sudo apt-get update && sudo apt-get install -y wget
+```
+
+**Arch**
+```bash
+sudo pacman -Sy --needed wget
+```
+
+**openSUSE**
+```bash
+sudo zypper install -y wget
+```
+
+---
+
+
 ## 🚀 Quick Start (wget-style copy & paste)
 
 > These commands save the script to `~/scripts/` so you can run it again later. Paste them exactly into your terminal.
