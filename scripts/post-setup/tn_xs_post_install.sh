@@ -78,6 +78,9 @@ step "Log: ${LOG_FILE}"
 # ================== Privileges ==================
 if [[ $EUID -ne 0 ]]; then SUDO="sudo"; else SUDO=""; fi
 
+# Pre-auth sudo once (avoids mid-run password prompts)
+if [[ -n "$SUDO" ]]; then $SUDO -v || true; fi
+
 # ================== Distro Detect ==================
 DISTRO="unknown"
 if [[ -r /etc/os-release ]]; then
