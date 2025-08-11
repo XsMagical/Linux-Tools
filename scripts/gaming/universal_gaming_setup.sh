@@ -9,7 +9,7 @@
 # • Ensures needed repos (RPM Fusion / COPR on Fedora; i386 + components on Debian/Ubuntu)
 # • Installs core tools: Steam, Lutris, Heroic, Discord, MangoHud, GameMode, Wine, Vulkan tools
 # • Installs Proton helpers: ProtonPlus (native on Fedora) and ProtonUp-Qt (Flatpak user fallback)
-# • Creates a sane global MangoHud config
+# • Creates a sane user MangoHud config
 # • Prefers native packages; removes Flatpak duplicates if native exists (optional)
 #
 # Notes
@@ -28,7 +28,8 @@ INSTALL_DISCORD=1; INSTALL_HEROIC=1; INSTALL_STEAM=1; INSTALL_LUTRIS=1
 INSTALL_PROTONPLUS=1; INSTALL_PROTONUPQT=1
 KEEP_FLATPAK=0; CLEAN_DUPES=1
 BUNDLE=""                     # lite | normal | full
-OVERLAYS_MODE="steam"         # steam | system | none (default: steam-only)
+OVERLAYS_MODE=""              # steam | system | none | status | repair
+OVERLAYS_ONLY=0               # if set, perform overlay action then exit before installs
 
 for arg in "$@"; do
   case "$arg" in
@@ -45,9 +46,12 @@ for arg in "$@"; do
     --bundle=lite)      BUNDLE="lite" ;;
     --bundle=normal)    BUNDLE="normal" ;;
     --bundle=full)      BUNDLE="full" ;;
-    --overlays=steam)   OVERLAYS_MODE="steam" ;;
-    --overlays=system)  OVERLAYS_MODE="system" ;;
-    --overlays=none)    OVERLAYS_MODE="none" ;;
+    --overlays=steam)   OVERLAYS_MODE="steam" ;;   # Steam-only overlays
+    --overlays=system)  OVERLAYS_MODE="system" ;;  # System-wide overlays
+    --overlays=none)    OVERLAYS_MODE="none"  ;;   # Disable overlays
+    --overlays=status)  OVERLAYS_MODE="status" ;;  # Show current overlay status
+    --overlays=repair)  OVERLAYS_MODE="repair" ;;  # Aggressive cleanup, no install
+    --overlay-only)     OVERLAYS_ONLY=1 ;;
     *) echo "Unknown flag: $arg"; exit 2 ;;
   esac
 done
@@ -127,7 +131,6 @@ run_as_user() {
 
 # ---------- Flatpak (user scope) ----------
 fp_user() {
-  # Minimal but complete env for user Flatpak calls (include PATH so 'runuser' is found)
   local cmd=(flatpak --user "$@")
   if command -v runuser >/dev/null 2>&1; then
     env -i PATH="/usr/sbin:/usr/bin:/bin:/sbin" \
@@ -230,54 +233,48 @@ ensure_app() {
 ensure_debian_components() {
   case "${ID_LIKE:-$ID}" in
     *debian*)
-      # Add contrib/non-free/non-free-firmware to all deb lines if missing
       if ! grep -Eq '^\s*deb .* (contrib|non-free)' /etc/apt/sources.list; then
         echo "[Debian] Enabling contrib non-free non-free-firmware…"
         sudo sed -i -E 's/^(deb\s+[^#]*\s+main)(\s|$)/\1 contrib non-free non-free-firmware\2/' /etc/apt/sources.list || true
         sudo apt update -y || true
       fi
-      # Ensure basics
       sudo apt install -y util-linux flatpak || true
       ;;
   esac
 }
 
 # ======================= Overlay helpers (Steam/system/none) ========================
-# Disable any prior global overlay env exports
-tn_disable_overlay_globals() {
-  local files=(
-    /etc/environment
-    /etc/profile
-    /etc/profile.d/tn-gaming-env.sh
-    /etc/profile.d/99-gaming-env.sh
-    "$HOME/.profile"
-    "$HOME/.bash_profile"
-    "$HOME/.bashrc"
-    "$HOME/.config/environment.d/90-gaming.conf"
-  )
-  for f in "${files[@]}"; do
-    [[ -f "$f" ]] || continue
-    sudo sed -i -E \
-      -e 's/^(export[[:space:]]+)?(MANGOHUD|ENABLE_VKBASALT|VK_INSTANCE_LAYERS|VK_LAYER_PATH|DXVK_HUD|GAMEMODERUNEXEC|__GL_THREADED_OPTIMIZATIONS|WINE_FULLSCREEN_FSR)=.*/# \0 (disabled by TN overlays)/' \
-      -e 's/^(MANGOHUD|ENABLE_VKBASALT|VK_INSTANCE_LAYERS|VK_LAYER_PATH|DXVK_HUD|GAMEMODERUNEXEC|__GL_THREADED_OPTIMIZATIONS|WINE_FULLSCREEN_FSR)=.*/# \0 (disabled by TN overlays)/' \
-      "$f" || true
-  done
+ov_log() { printf '[Overlays] %s\n' "$*"; }
+
+ov_rm_system_env() {
+  sudo rm -f /etc/profile.d/tn-gaming-env.sh /etc/environment.d/tn-gaming-env.conf 2>/dev/null || true
+  sudo sed -i '/^MANGOHUD=/d;/^ENABLE_VKBASALT=/d;/^VK_INSTANCE_LAYERS=/d;/^VK_LAYER_PATH=/d' /etc/environment 2>/dev/null || true
 }
 
-# Install system-wide env enabling overlays for all apps
-tn_setup_overlays_systemwide() {
+ov_disable_globals() {
+  ov_log "Disabling user & system overlay env…"
+  ov_rm_system_env
+  sed -i '/MANGOHUD/d;/MANGOHUD_CONFIGFILE/d;/ENABLE_VKBASALT/d;/VK_INSTANCE_LAYERS/d;/VK_LAYER_PATH/d' \
+    ~/.profile ~/.bashrc ~/.bash_profile 2>/dev/null || true
+  rm -f ~/.config/environment.d/90-gaming.conf ~/.config/environment.d/tn-gaming.conf 2>/dev/null || true
+  systemctl --user unset-environment MANGOHUD MANGOHUD_CONFIGFILE ENABLE_VKBASALT VK_INSTANCE_LAYERS VK_LAYER_PATH 2>/dev/null || true
+  export -n MANGOHUD MANGOHUD_CONFIGFILE ENABLE_VKBASALT VK_INSTANCE_LAYERS VK_LAYER_PATH 2>/dev/null || true
+}
+
+ov_setup_systemwide() {
+  ov_log "Enabling system‑wide overlays via /etc/profile.d…"
   sudo install -d -m 755 /etc/profile.d
   sudo bash -c 'cat > /etc/profile.d/tn-gaming-env.sh' <<'EOT'
 # Team Nocturnal — Gaming overlays (system-wide)
 export MANGOHUD=1
+# Enable VkBasalt if Vulkan implicit layer exists
 if [ -d /usr/share/vulkan/implicit_layer.d ] || [ -d /etc/vulkan/implicit_layer.d ]; then
   export ENABLE_VKBASALT=1
 fi
 EOT
 }
 
-# Create wrapper so only Steam gets overlays
-tn_setup_steam_wrapper() {
+ov_setup_steam_wrapper() {
   local scripts_dir="$HOME/scripts"
   local wrapper="$scripts_dir/steam_with_overlays.sh"
   local local_desktop="$HOME/.local/share/applications"
@@ -300,7 +297,7 @@ WRAP
   else
     cat > "$local_desktop/steam.desktop" <<EOF
 [Desktop Entry]
-Name=Steam
+Name=Steam (TN Overlays)
 Type=Application
 TryExec=steam
 Exec=$wrapper %U
@@ -310,21 +307,66 @@ EOF
   fi
   sed -i -E "s|^Exec=.*|Exec=$wrapper %U|g" "$local_desktop/steam.desktop" || true
   sed -i -E 's/%[Uuf]( +%[Uuf])+/ %U/g' "$local_desktop/steam.desktop" || true
-  update-desktop-database >/dev/null 2>&1 || true
+  update-desktop-database ~/.local/share/applications >/dev/null 2>&1 || true
 }
 
-tn_remove_steam_wrapper() {
-  rm -f "$HOME/scripts/steam_with_overlays.sh" \
-        "$HOME/.local/share/applications/steam.desktop" 2>/dev/null || true
+ov_rm_steam_wrapper() {
+  rm -f "$HOME/scripts/steam_with_overlays.sh" "$HOME/.local/share/applications/steam.desktop" 2>/dev/null || true
+  update-desktop-database ~/.local/share/applications >/dev/null 2>&1 || true
 }
 
-tn_restart_steam_if_running() {
+ov_restart_steam_if_running() {
   if pgrep -x steam >/dev/null 2>&1; then
-    echo "Restarting Steam to apply overlay changes…"
+    ov_log "Restarting Steam to apply overlay changes…"
     pkill -x steam || true
     (nohup steam >/dev/null 2>&1 & disown) || true
   fi
 }
+
+ov_status() {
+  echo "[Overlays] Status:"
+  [[ -f /etc/profile.d/tn-gaming-env.sh ]] && echo "  • System‑wide env: /etc/profile.d/tn-gaming-env.sh" || echo "  • No system‑wide env"
+  [[ -f "$HOME/scripts/steam_with_overlays.sh" ]] && echo "  • Steam wrapper: ~/scripts/steam_with_overlays.sh" || echo "  • No Steam wrapper"
+  systemctl --user show-environment | grep -E 'MANGOHUD|ENABLE_VKBASALT|VK_INSTANCE_LAYERS|VK_LAYER_PATH' || echo "  • No overlay vars in user-manager env"
+}
+
+# ===== Overlay‑only path: run and exit before installers when requested ==============
+if [[ -n "${OVERLAYS_MODE}" ]]; then
+  case "$OVERLAYS_MODE" in
+    steam)
+      ov_disable_globals
+      ov_setup_steam_wrapper
+      ov_restart_steam_if_running
+      ov_log "Mode set to: STEAM‑ONLY"
+      ;;
+    system)
+      ov_rm_steam_wrapper
+      ov_setup_systemwide()
+      # ensure current session doesn’t hold on to stale vars
+      systemctl --user unset-environment MANGOHUD ENABLE_VKBASALT VK_INSTANCE_LAYERS VK_LAYER_PATH 2>/dev/null || true
+      ov_restart_steam_if_running
+      ov_log "Mode set to: SYSTEM‑WIDE"
+      ;;
+    none)
+      ov_disable_globals
+      ov_rm_steam_wrapper
+      ov_restart_steam_if_running
+      ov_log "Mode set to: NONE (disabled)"
+      ;;
+    status)
+      ov_status
+      ;;
+    repair)
+      ov_disable_globals
+      ov_rm_steam_wrapper
+      ov_status
+      ;;
+  esac
+  # If user sent only an overlays command or explicitly asked overlay-only, exit now.
+  if [[ $OVERLAYS_ONLY -eq 1 || $# -eq 1 ]]; then
+    exit 0
+  fi
+fi
 
 # ============================ System update & repos =================================
 echo "[0/8] Preparing system…"
@@ -428,10 +470,8 @@ if [[ $INSTALL_PROTONPLUS -eq 1 && $FLATPAK_ONLY -eq 0 ]]; then
 fi
 [[ $INSTALL_PROTONUPQT -eq 1 ]] && flatpak_install_user net.davidotek.pupgui2 || true
 
-# ===================== MangoHud + overlay scope control =============================
-echo "[5/8] Configuring MangoHud + overlay scope (${OVERLAYS_MODE})…"
-
-# Always write/update a user MangoHud config with sensible defaults
+# ===================== MangoHud user config + overlay scope (if provided) ===========
+echo "[5/8] Configuring MangoHud user defaults…"
 MH_DIR="$REAL_HOME/.config/MangoHud"
 MH_CONF="$MH_DIR/MangoHud.conf"
 run_as_user mkdir -p "$MH_DIR"
@@ -453,29 +493,28 @@ background_alpha=0.6
 position=top-left
 EOF
 
-# Apply overlay mode
-case "$OVERLAYS_MODE" in
-  steam)
-    tn_disable_overlay_globals
-    tn_setup_steam_wrapper
-    tn_restart_steam_if_running
-    echo "[Overlays] Steam-only enabled (wrapper + desktop override)."
-    ;;
-  system)
-    tn_remove_steam_wrapper
-    tn_setup_overlays_systemwide
-    # Also set MANGOHUD=1 in /etc/environment as a fallback
-    grep -q '^MANGOHUD=1' /etc/environment 2>/dev/null || echo "MANGOHUD=1" | sudo tee -a /etc/environment >/dev/null
-    tn_restart_steam_if_running
-    echo "[Overlays] System-wide enabled."
-    ;;
-  none)
-    tn_disable_overlay_globals
-    tn_remove_steam_wrapper
-    tn_restart_steam_if_running
-    echo "[Overlays] Disabled everywhere."
-    ;;
-esac
+# If user also passed an overlay mode alongside installs, apply it here.
+if [[ -n "${OVERLAYS_MODE}" ]]; then
+  case "$OVERLAYS_MODE" in
+    steam)
+      ov_disable_globals
+      ov_setup_steam_wrapper
+      ov_restart_steam_if_running
+      ;;
+    system)
+      ov_rm_steam_wrapper
+      ov_setup_systemwide
+      systemctl --user unset-environment MANGOHUD ENABLE_VKBASALT VK_INSTANCE_LAYERS VK_LAYER_PATH 2>/dev/null || true
+      ov_restart_steam_if_running
+      ;;
+    none)
+      ov_disable_globals
+      ov_rm_steam_wrapper
+      ov_restart_steam_if_running
+      ;;
+    status|repair) : ;;
+  esac
+fi
 
 # ============================= XDG fix ==============================================
 echo "[6/8] Ensuring Flatpak apps show in menus…"
@@ -502,15 +541,14 @@ cmd_exists gamemoderun && echo "  ✓ gamemode (gamemoderun)" || echo "  ✗ gam
 echo
 echo "------------------------------------------------------------"
 echo "✅ Done! Native-first gaming stack is ready."
-echo "Overlay mode: $OVERLAYS_MODE"
+echo "Overlay mode (if set this run): ${OVERLAYS_MODE:-(unchanged)}"
 echo "Bundle: ${BUNDLE:-normal}"
 echo "Flags: NATIVE_ONLY=$NATIVE_ONLY FLATPAK_ONLY=$FLATPAK_ONLY DISCORD=$INSTALL_DISCORD HEROIC=$INSTALL_HEROIC STEAM=$INSTALL_STEAM LUTRIS=$INSTALL_LUTRIS PPLUS=$INSTALL_PROTONPLUS PUPQT=$INSTALL_PROTONUPQT CLEAN=$CLEAN_DUPES KEEP_FLATPAK=$KEEP_FLATPAK"
-echo "To switch overlays at any time:"
-echo "  • Steam only:  $0 --overlays=steam"
-echo "  • System-wide: $0 --overlays=system"
-echo "  • Disable:     $0 --overlays=none"
-echo "To choose a bundle:"
-echo "  • Lite:        $0 --bundle=lite"
-echo "  • Normal:      $0 --bundle=normal"
-echo "  • Full:        $0 --bundle=full"
+echo
+echo "Overlay controls (no installs):"
+echo "  • Steam only:  $0 --overlays=steam --overlay-only"
+echo "  • System-wide: $0 --overlays=system --overlay-only"
+echo "  • Disable:     $0 --overlays=none --overlay-only"
+echo "  • Status:      $0 --overlays=status --overlay-only"
+echo "  • Repair:      $0 --overlays=repair --overlay-only"
 echo "------------------------------------------------------------"
