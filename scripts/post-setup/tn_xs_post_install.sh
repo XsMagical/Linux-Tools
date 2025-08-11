@@ -240,16 +240,34 @@ run_gaming_preset() {
     crossmark "Could not obtain universal_gaming_setup.sh"
   fi
 }
-
 # ================== Preset Runners ==================
 run_media_preset()   { PKGS=(); add_media_packages;   pm_refresh; pm_install "${PKGS[@]}"; checkmark "Media tools attempted"; }
 run_general_preset() { PKGS=(); add_general_packages; pm_refresh; pm_install "${PKGS[@]}"; checkmark "General tools attempted"; }
 run_lite_preset()    { PKGS=(); add_lite_packages;    pm_refresh; pm_install "${PKGS[@]}"; checkmark "Lite essentials attempted"; }
+
 run_full_preset() {
   run_general_preset
   run_media_preset
-  PKGS=(); add_devvirt_packages; pm_refresh; pm_install "${PKGS[@]}"; checkmark "Dev/Virtualization stack attempted"
+  PKGS=(); add_devvirt_packages; pm_refresh; pm_install "${PKGS[@]}"
+
+  # Libvirt/Virt-Manager post-setup (Fedora/RHEL & friends)
+  # Keep going even if any unit isn't present (|| true).
+  step "Configuring libvirt (sockets, groups, default network)"
+  ${SUDO} systemctl enable --now virtqemud.socket virtqemud-ro.socket virtqemud-admin.socket || true
+  ${SUDO} systemctl enable --now virtlogd.socket virtlockd.socket || true
+  ${SUDO} systemctl enable --now libvirtd || true
+
+  # Allow current user to manage VMs (re-login required to take effect)
+  ${SUDO} usermod -aG libvirt "$USER" || true
+  ${SUDO} usermod -aG kvm "$USER" || true
+
+  # Ensure the default NAT network exists and autostarts
+  ${SUDO} virsh net-autostart default 2>/dev/null || true
+  ${SUDO} virsh net-start default 2>/dev/null || true
+
+  checkmark "Dev/Virtualization stack attempted"
 }
+
 
 # ================== Pre-flight (Fedora) ==================
 [[ "$DISTRO" == "fedora" ]] && enable_rpmfusion
