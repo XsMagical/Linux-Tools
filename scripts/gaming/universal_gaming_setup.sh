@@ -33,6 +33,7 @@ msg()  { printf '%b\n' "${BOLD}==>${RESET} $*"; }
 note() { printf '%b\n' " • $*\n"; }
 warn() { printf '%b\n' "${RED}WARN:${RESET} $*\n"; }
 have() { command -v "$1" >/dev/null 2>&1; }
+
 require_sudo() { if [[ $EUID -ne 0 ]]; then sudo -v; fi; }
 
 detect_pkgmgr() {
@@ -127,3 +128,160 @@ TryExec=steam
 Exec=$WRAPPER %U
 Icon=steam
 Categories=Game;
+EOF
+  fi
+  sed -i -E "s|^Exec=.*|Exec=$WRAPPER %U|g" "$LOCAL_DESKTOP/steam.desktop" || true
+  sed -i -E 's/%[Uuf]( +%[Uuf])+/ %U/g' "$LOCAL_DESKTOP/steam.desktop" || true
+  update-desktop-database >/dev/null 2>&1 || true
+  note "Installed desktop override: $LOCAL_DESKTOP/steam.desktop"
+}
+
+remove_steam_wrapper() {
+  msg "Removing Steam wrapper & desktop override (if any)…"
+  rm -f "$WRAPPER" 2>/dev/null || true
+  rm -f "$LOCAL_DESKTOP/steam.desktop" 2>/dev/null || true
+}
+
+restart_steam_if_running() {
+  if pgrep -x steam >/dev/null 2>&1; then
+    msg "Restarting Steam to apply overlay changes…"
+    pkill -x steam || true
+    (nohup steam >/dev/null 2>&1 & disown) || true
+  else
+    note "Steam not running; changes will apply next launch."
+  fi
+}
+
+# ===== Package ops ==================================================================
+enable_repos_if_needed() {
+  case "$PKG" in
+    dnf)
+      # RPM Fusion for Fedora
+      if have rpm && [[ "$(rpm -E %fedora 2>/dev/null || echo '')" != "" ]]; then
+        if ! dnf repolist --enabled 2>/dev/null | grep -qi 'rpmfusion.*free'; then
+          msg "Enabling RPM Fusion (free + nonfree)…"
+          require_sudo
+          sudo dnf -y install \
+            "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm" \
+            "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm" || true
+        fi
+      fi
+      ;;
+    apt)
+      require_sudo
+      sudo dpkg --add-architecture i386 || true
+      sudo apt update || true
+      ;;
+    pacman) : ;;
+    zypper) : ;;
+  esac
+}
+
+install_gaming_basics() {
+  msg "Installing core gaming tooling… (Steam, Lutris, Heroic, MangoHud, GameMode, Wine, Vulkan, vkBasalt)"
+  case "$PKG" in
+    dnf)
+      require_sudo
+      sudo dnf -y install steam lutris heroic-games-launcher discord \
+        mangohud gamemode vkbasalt wine winetricks \
+        vulkan-loader vulkan-tools | tee -a "$LOG_FILE"
+      ;;
+    apt)
+      require_sudo
+      sudo apt -y install steam lutris heroic discord \
+        mangohud gamemode vkbasalt wine winetricks vulkan-tools | tee -a "$LOG_FILE"
+      ;;
+    pacman)
+      require_sudo
+      sudo pacman -Sy --needed --noconfirm \
+        steam lutris heroic-games-launcher-bin discord \
+        mangohud gamemode vkbasalt wine winetricks vulkan-tools | tee -a "$LOG_FILE"
+      ;;
+    zypper)
+      require_sudo
+      sudo zypper -n install -y \
+        steam lutris heroic-games-launcher discord \
+        mangohud gamemode vkbasalt wine winetricks vulkan-tools | tee -a "$LOG_FILE"
+      ;;
+    *)
+      warn "Skipping installs: unknown package manager."
+      ;;
+  esac
+}
+
+# ===== Arg parsing ==================================================================
+print_banner
+OVERLAYS_MODE=""     # steam | system | none
+VERBOSE=0
+NONINTERACTIVE=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --overlays=steam|--overlays=system|--overlays=none)
+      OVERLAYS_MODE="${arg#*=}"
+      ;;
+    -y|--yes) NONINTERACTIVE=1 ;;
+    --verbose) VERBOSE=1 ;;
+    *) : ;; # ignore unknown flags (don’t fail)
+  endsw
+done 2>/dev/null || true
+
+# Enable verbose tracing if requested
+if [[ $VERBOSE -eq 1 ]]; then set -x; fi
+
+# ===== Overlay switch path (no reinstall) ===========================================
+if [[ -n "${OVERLAYS_MODE}" ]]; then
+  case "$OVERLAYS_MODE" in
+    steam)
+      disable_globals
+      setup_steam_wrapper
+      restart_steam_if_running
+      msg "Overlays set to: STEAM only."
+      exit 0
+      ;;
+    system)
+      remove_steam_wrapper
+      setup_overlays_systemwide
+      restart_steam_if_running
+      msg "Overlays set to: SYSTEM‑WIDE."
+      exit 0
+      ;;
+    none)
+      disable_globals
+      remove_steam_wrapper
+      restart_steam_if_running
+      msg "Overlays set to: NONE."
+      exit 0
+      ;;
+  esac
+fi
+
+# ===== Full install path =============================================================
+detect_pkgmgr
+enable_repos_if_needed
+install_gaming_basics
+
+# Create a sane default MangoHud config for the user (optional)
+MH_DIR="$HOME_DIR/.config/MangoHud"
+MH_CONF="$MH_DIR/MangoHud.conf"
+mkdir -p "$MH_DIR"
+if [[ ! -s "$MH_CONF" ]]; then
+  cat > "$MH_CONF" <<'EOF'
+cpu_stats
+gpu_stats
+vram
+ram
+fps
+frame_timing
+frametime
+font_size=24
+background_alpha=0.6
+position=top-left
+EOF
+  note "Created default MangoHud config at: $MH_CONF"
+fi
+
+msg "All done. Use overlay controls anytime:"
+note "  • Steam only:  ${BOLD}$0 --overlays=steam${RESET}"
+note "  • System-wide: ${BOLD}$0 --overlays=system${RESET}"
+note "  • Disable:     ${BOLD}$0 --overlays=none${RESET}"
