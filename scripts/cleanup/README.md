@@ -15,13 +15,141 @@
 **Safe-by-default cleanup** for Debian/Ubuntu (APT), Fedora/RHEL (DNF), and Arch/Manjaro (Pacman).  
 Optional extras include Flatpak/Snap tidying, Steam shader cache cleanup, dev tool cache purges, and Docker pruning.
 
-> 🛡️ **No kernel removals.** Only caches, orphans, old logs/journals, and optional user/dev/tool caches are touched.  
-> 🧾 **Logging:** Every run is logged to `~/cleanup_logs/clean-YYYYMMDD-HHMM.log`.  
-> 📁 **Location:** All scripts in this repo live under `~/scripts`.
+---
+
+## 📌 Overview
+
+This script provides a safe and universal way to clean up your Linux system without breaking anything important. It detects your package manager (APT, DNF, Pacman) and removes:
+
+- Orphaned and unneeded packages  
+- Old package caches  
+- Unused Flatpak runtimes/apps  
+- Disabled Snap revisions  
+- Old logs and journal files  
+- User thumbnail and trash files  
+- Dev caches (pip, npm, yarn, cargo)  
+- *(Optional)* Steam shader/GPU caches  
+- *(Optional)* Docker unused images/containers/volumes
+
+It works safely out of the box, with optional flags for more aggressive cleaning.
 
 ---
 
-## What it cleans
+## 📂 Script Source
+
+View or download here:  
+`https://github.com/XsMagical/Linux-Tools/blob/main/scripts/cleanup/universal_cleanup.sh`
+
+---
+
+## ▶️ One-Line Usage (Run Directly from GitHub)
+
+**1) Safe default cleanup (recommended for first run)**
+
+~~~bash
+bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh) --yes
+~~~
+
+**2) Aggressive cleanup (deeper cache removal)**
+
+~~~bash
+bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh) --yes --aggressive --journal-days=7
+~~~
+
+**3) Add Steam cache cleanup (safe: games/configs untouched)**
+
+~~~bash
+bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh) --yes --steam-cache
+~~~
+
+**4) Docker cleanup (removes ALL unused images, containers, volumes)**
+
+~~~bash
+bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh) --yes --docker
+~~~
+
+**5) Combine aggressive + Steam + Docker**
+
+~~~bash
+bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh) --yes --aggressive --journal-days=7 --steam-cache --docker
+~~~
+
+---
+
+## 💾 Running Locally (After Download)
+
+*First, download and make the script executable:*
+
+~~~bash
+mkdir -p ~/scripts
+cd ~/scripts
+wget https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh
+chmod +x ~/scripts/universal_cleanup.sh
+~~~
+
+*Then you can run it from your saved copy:*
+
+**1) Safe default cleanup**
+
+~~~bash
+~/scripts/universal_cleanup.sh --yes
+~~~
+
+**2) Aggressive cleanup**
+
+~~~bash
+~/scripts/universal_cleanup.sh --yes --aggressive --journal-days=7
+~~~
+
+**3) Steam cache cleanup**
+
+~~~bash
+~/scripts/universal_cleanup.sh --yes --steam-cache
+~~~
+
+**4) Docker cleanup**
+
+~~~bash
+~/scripts/universal_cleanup.sh --yes --docker
+~~~
+
+**5) Aggressive + Steam + Docker**
+
+~~~bash
+~/scripts/universal_cleanup.sh --yes --aggressive --journal-days=7 --steam-cache --docker
+~~~
+
+---
+
+## 🔧 Usage & Options
+
+~~~bash
+~/scripts/universal_cleanup.sh [options]
+~~~
+
+~~~text
+--yes              Non-interactive (auto-confirm where possible)
+--dry-run          Show what would run; make no changes
+
+--aggressive       Deeper cache purge:
+                   • DNF: 'dnf clean all'
+                   • Pacman: paccache keep=1 (or 'pacman -Scc' fallback)
+                   • npm: 'npm cache clean --force'
+--journal-days=N   Vacuum systemd journals to N days (default: 14)
+
+--steam-cache      Clear Steam shader caches and GPU shader caches (safe)
+--docker           Run 'docker system prune' to remove ALL unused:
+                   images, containers, networks, and dangling volumes
+
+--no-flatpak       Skip Flatpak cleanup
+--no-snap          Skip Snap cleanup
+
+-h, --help         Show help
+~~~
+
+---
+
+## 🧼 What It Cleans
 
 - **System packages**
   - **APT:** `autoremove --purge`, then `autoclean` (or `clean` with `--aggressive`).
@@ -29,8 +157,8 @@ Optional extras include Flatpak/Snap tidying, Steam shader cache cleanup, dev to
   - **Pacman:** remove orphans (`pacman -Rns …`), then trim caches with `paccache` (keep 3 by default, keep 1 with `--aggressive`). Falls back to `pacman -Sc/-Scc` if `paccache` is missing.
 
 - **Runtimes & storefronts**
-  - **Flatpak:** `flatpak uninstall --unused`, refresh appstream, optional `flatpak repair` with `--aggressive`.
-  - **Snap:** safely remove disabled/obsolete revisions (skipped with `--no-snap`).
+  - **Flatpak:** `flatpak uninstall --unused` + appstream refresh (optional `flatpak repair` with `--aggressive`).
+  - **Snap:** clean disabled/obsolete revisions (skippable with `--no-snap`).
 
 - **System logs**
   - **journald:** vacuum to N days (default **14**).
@@ -48,109 +176,35 @@ Optional extras include Flatpak/Snap tidying, Steam shader cache cleanup, dev to
 
 ---
 
-## Usage
-
-~~~bash
-~/scripts/universal_cleanup.sh [options]
-~~~
-
-### Options
-
-~~~text
---journal-days=N   Vacuum systemd journals to N days (default: 14)
---aggressive       Deeper cache purge (DNF clean all / Pacman keep=1 / npm clean)
---docker           Include Docker prune (prompts unless --yes)
---steam-cache      Clear Steam & GPU shader caches
---dry-run          Show what would run; make no changes
---yes              Non-interactive (auto-confirm where possible)
---no-snap          Skip Snap cleanup
---no-flatpak       Skip Flatpak cleanup
--h, --help         Show help
-~~~
-
----
-
-## Quick start
-
-**Install to `~/scripts` (once):**
-~~~bash
-mkdir -p ~/scripts && cd ~/scripts
-curl -fsSLo universal_cleanup.sh \
-  https://raw.githubusercontent.com/XsMagical/Linux-Tools/refs/heads/main/scripts/cleanup/universal_cleanup.sh
-chmod +x universal_cleanup.sh
-~~~
-
-**Dry run (no changes):**
-~~~bash
-~/scripts/universal_cleanup.sh --dry-run
-~~~
-
-**Safe default cleanup (non-interactive):**
-~~~bash
-~/scripts/universal_cleanup.sh --yes
-~~~
-
-**Keep journals for 7 days:**
-~~~bash
-~/scripts/universal_cleanup.sh --journal-days=7 --yes
-~~~
-
-**Aggressive cache trimming:**
-~~~bash
-~/scripts/universal_cleanup.sh --aggressive --yes
-~~~
-
-**Steam shader cleanup:**
-~~~bash
-~/scripts/universal_cleanup.sh --steam-cache --yes
-~~~
-
-**Include Docker prune:**
-~~~bash
-~/scripts/universal_cleanup.sh --docker --yes
-~~~
-
-**Skip Flatpak & Snap:**
-~~~bash
-~/scripts/universal_cleanup.sh --no-flatpak --no-snap --yes
-~~~
-
-**TN one-liner (install + run safe cleanup):**
-~~~bash
-mkdir -p ~/scripts && curl -fsSLo ~/scripts/universal_cleanup.sh https://raw.githubusercontent.com/XsMagical/Linux-Tools/refs/heads/main/scripts/cleanup/universal_cleanup.sh && chmod +x ~/scripts/universal_cleanup.sh && ~/scripts/universal_cleanup.sh --yes
-~~~
-
----
-
-## Supported distros
+## 🖥️ Supported Distros
 
 - **Debian/Ubuntu** (APT)
 - **Fedora/RHEL** (DNF/dnf5)
 - **Arch/Manjaro** (Pacman, optional `paccache`)
 
-**Pacman note:** If `paccache` is missing, install `pacman-contrib` for better cache trimming:
-~~~bash
-sudo pacman -Syu --needed pacman-contrib
-~~~
+> **Pacman tip:** If `paccache` is missing, install `pacman-contrib`:
+>
+> ~~~bash
+> sudo pacman -Syu --needed pacman-contrib
+> ~~~
 
 ---
 
-## Logs & exit codes
+## 🗂️ Logs & Exit Codes
 
-- **Logs:** `~/cleanup_logs/clean-YYYYMMDD-HHMM.log`
+- **Logs:** `~/cleanup_logs/clean-YYYYMMDD-HHMM.log`  
 - **Exit codes:** `0` success, `1` error
 
 ---
 
-## Notes & safety
+## ⚠ Notes
 
-- Designed to be **re-runnable** and idempotent where possible.
-- **No kernel package removals**; no bootloader changes.
-- Docker prune only runs when `--docker` is supplied.
-- Steam cleanup only runs when `--steam-cache` is supplied.
+- Does **NOT** remove kernels — leave kernel management to your package manager.
+- Designed for Fedora, Ubuntu/Debian, and Arch/Manjaro.
+- Safe defaults — only cleans more aggressively when you add flags.
+- Keeps a log in `~/cleanup_logs` for every run.
+- All scripts in this repo are intended to live under `~/scripts`.
 
 ---
 
-## Contributing
-
-PRs welcome! Keep changes **safe by default**, distro-aware, and behind flags when behavior may be destructive. Please test on at least one distro per package manager family (APT/DNF/Pacman) before submitting.
+**Enjoy your cleaner, faster Linux system!**
