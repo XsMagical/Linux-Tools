@@ -63,7 +63,13 @@ print_banner
 # ---------- Detect distro / user ----------
 if [[ -r /etc/os-release ]]; then . /etc/os-release; else ID="unknown"; ID_LIKE=""; fi
 
-# Make sure sbin is on PATH so 'runuser' resolves on Debian/Ubuntu
+# Arch guard: skip Steam on ARM
+ARCH="$(uname -m)"
+case "$ARCH" in
+  aarch64|armv7*|armhf|arm64) INSTALL_STEAM=0 ;;
+esac
+
+# Ensure sbin is available in PATH (Debian/Ubuntu often need this for runuser)
 case ":$PATH:" in *:/usr/sbin:*) :;; *) PATH="/usr/sbin:/sbin:$PATH";; esac
 
 REAL_USER="${SUDO_USER:-$USER}"
@@ -95,14 +101,16 @@ run_as_user() {
 
 # ---------- Flatpak (user scope) ----------
 fp_user() {
-  # Preserve a minimal env so Flatpak works even when run via sudo
+  # Minimal but complete env for user Flatpak calls (include PATH so 'runuser' is found)
   local cmd=(flatpak --user "$@")
   if command -v runuser >/dev/null 2>&1; then
-    env -i HOME="$REAL_HOME" USER="$REAL_USER" LOGNAME="$REAL_USER" SHELL="/bin/bash" \
+    env -i PATH="/usr/sbin:/usr/bin:/bin:/sbin" \
+      HOME="$REAL_HOME" USER="$REAL_USER" LOGNAME="$REAL_USER" SHELL="/bin/bash" \
       XDG_RUNTIME_DIR="/run/user/$REAL_UID" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$REAL_UID/bus" \
       runuser -u "$REAL_USER" -- "${cmd[@]}"
   else
-    env -i HOME="$REAL_HOME" USER="$REAL_USER" LOGNAME="$REAL_USER" SHELL="/bin/bash" \
+    env -i PATH="/usr/sbin:/usr/bin:/bin:/sbin" \
+      HOME="$REAL_HOME" USER="$REAL_USER" LOGNAME="$REAL_USER" SHELL="/bin/bash" \
       XDG_RUNTIME_DIR="/run/user/$REAL_UID" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$REAL_UID/bus" \
       sudo -u "$REAL_USER" -- "${cmd[@]}"
   fi
@@ -112,11 +120,11 @@ ensure_flatpak_user() {
   [[ $NATIVE_ONLY -eq 1 ]] && return 0
   if ! cmd_exists flatpak; then
     case "$ID" in
-      fedora|rhel|rocky|almalinux)       sudo dnf install -y flatpak ;;
-      arch|manjaro|endeavouros)          sudo pacman -Sy --needed --noconfirm flatpak ;;
+      fedora|rhel|rocky|almalinux)       sudo dnf install -y flatpak || true ;;
+      arch|manjaro|endeavouros)          sudo pacman -Sy --needed --noconfirm flatpak || true ;;
       ubuntu|linuxmint|pop|zorin|elementary|debian)
-                                         sudo apt update && sudo apt install -y flatpak ;;
-      opensuse*|sles)                    sudo zypper -n install -y flatpak ;;
+                                         sudo apt update && sudo apt install -y flatpak || true ;;
+      opensuse*|sles)                    sudo zypper -n install -y flatpak || true ;;
       *) echo "Flatpak not found; skipping Flatpak fallback."; return 1 ;;
     esac
   fi
@@ -135,14 +143,25 @@ EOF
   run_as_user systemctl --user import-environment XDG_DATA_DIRS 2>/dev/null || true
 }
 
-# ---------- Helper: native install command per distro ----------
+# ---------- Native install (per-package, so one miss doesn't block others) ----------
 native_install() {
+  local pkgs=("$@")
+  [[ ${#pkgs[@]} -eq 0 ]] && return 0
   case "$ID" in
-    fedora|rhel|rocky|almalinux)                 sudo dnf    install -y --skip-unavailable "$@" ;;
-    arch|manjaro|endeavouros)                    sudo pacman -Sy --needed --noconfirm "$@" ;;
-    ubuntu|linuxmint|pop|zorin|elementary|debian) sudo apt    install -y "$@" ;;
-    opensuse*|sles)                              sudo zypper -n install -y "$@" ;;
-    *) return 1 ;;
+    fedora|rhel|rocky|almalinux)
+      for p in "${pkgs[@]}"; do sudo dnf install -y --skip-unavailable "$p" || true; done
+      ;;
+    arch|manjaro|endeavouros)
+      for p in "${pkgs[@]}"; do sudo pacman -S --needed --noconfirm "$p" || true; done
+      ;;
+    ubuntu|linuxmint|pop|zorin|elementary|debian)
+      for p in "${pkgs[@]}"; do sudo apt install -y "$p" || true; done
+      ;;
+    opensuse*|sles)
+      for p in "${pkgs[@]}"; do sudo zypper -n install -y "$p" || true; done
+      ;;
+    *)
+      return 1 ;;
   esac
 }
 
@@ -152,7 +171,7 @@ ensure_app() {
   local name="$1" bin="$2" fpid="$3"; shift 3
   local pkgs=("$@")
   # honor feature toggles
-  [[ "$name" == "Steam"   && $INSTALL_STEAM   -eq 0 ]] && return 0
+  [[ "$name" == "Steam"   && $INSTALL_STEAM   -eq 0 ]] && { echo "[Skip] Steam disabled."; return 0; }
   [[ "$name" == "Discord" && $INSTALL_DISCORD -eq 0 ]] && return 0
   [[ "$name" == "Heroic"  && $INSTALL_HEROIC  -eq 0 ]] && return 0
   [[ "$name" == "Lutris"  && $INSTALL_LUTRIS  -eq 0 ]] && return 0
@@ -163,7 +182,7 @@ ensure_app() {
 
   if [[ $FLATPAK_ONLY -eq 0 && $native_present -ne 0 ]]; then
     echo "[Native] Installing $name…"
-    native_install "${pkgs[@]}" || true
+    native_install "${pkgs[@]}"
     native_present=1
     for p in "${pkgs[@]}"; do has_pkg "$p" && { native_present=0; break; }; done
     cmd_exists "$bin" && native_present=0
@@ -187,7 +206,7 @@ ensure_debian_components() {
     *debian*)
       # Add contrib/non-free/non-free-firmware to all deb lines if missing
       if ! grep -Eq '^\s*deb .* (contrib|non-free)' /etc/apt/sources.list; then
-        echo "[Debian] Enabling contrib/non-free/non-free-firmware…"
+        echo "[Debian] Enabling contrib non-free non-free-firmware…"
         sudo sed -i -E 's/^(deb\s+[^#]*\s+main)(\s|$)/\1 contrib non-free non-free-firmware\2/' /etc/apt/sources.list || true
         sudo apt update -y || true
       fi
@@ -201,10 +220,10 @@ ensure_debian_components() {
 echo "[0/8] Preparing system…"
 if [[ $FLATPAK_ONLY -eq 0 ]]; then
   case "$ID" in
-    fedora|rhel|rocky|almalinux)                 sudo dnf upgrade --refresh -y ;;
-    arch|manjaro|endeavouros)                    sudo pacman -Syu --noconfirm ;;
-    ubuntu|linuxmint|pop|zorin|elementary|debian) sudo apt update && sudo apt -y full-upgrade ;;
-    opensuse*|sles)                              sudo zypper -n refresh && sudo zypper -n update -y ;;
+    fedora|rhel|rocky|almalinux)                 sudo dnf upgrade --refresh -y || true ;;
+    arch|manjaro|endeavouros)                    sudo pacman -Syu --noconfirm || true ;;
+    ubuntu|linuxmint|pop|zorin|elementary|debian) sudo apt update && sudo apt -y full-upgrade || true ;;
+    opensuse*|sles)                              sudo zypper -n refresh && sudo zypper -n update -y || true ;;
     *) echo "Unknown distro — relying on Flatpak when needed." ;;
   esac
 fi
@@ -235,7 +254,7 @@ if [[ $FLATPAK_ONLY -eq 0 ]]; then
     debian)
       ensure_debian_components
       sudo dpkg --add-architecture i386 || true
-      # Optional Lutris repo on Debian 12 (bookworm)
+      # Optional Lutris repo on Debian 12 (bookworm). For trixie, Flatpak is usually better.
       if [[ "${VERSION_CODENAME:-}" == "bookworm" ]]; then
         sudo install -d -m 0755 /etc/apt/keyrings
         cat > /tmp/lutris.sources <<'SRC'
@@ -265,40 +284,39 @@ echo "[2/8] Installing/updating base gaming stack (native)…"
 if [[ $FLATPAK_ONLY -eq 0 ]]; then
   case "$ID" in
     fedora|rhel|rocky|almalinux)
-      native_install gamemode mangohud wine wine-mono cabextract p7zip p7zip-plugins unzip curl tar vulkan-tools || true
+      native_install gamemode mangohud wine wine-mono cabextract p7zip p7zip-plugins unzip curl tar vulkan-tools
       ;;
     arch|manjaro|endeavouros)
       if ! grep -q "^\[multilib\]" /etc/pacman.conf; then
         sudo sed -i 's/^#\[multilib\]/[multilib]/; s|^#Include = /etc/pacman.d/mirrorlist|Include = /etc/pacman.d/mirrorlist|' /etc/pacman.conf
-        sudo pacman -Sy
+        sudo pacman -Sy || true
       fi
-      native_install gamemode mangohud wine cabextract p7zip unzip curl tar vulkan-tools || true
+      native_install gamemode mangohud wine cabextract p7zip unzip curl tar vulkan-tools
       ;;
     ubuntu|linuxmint|pop|zorin|elementary)
-      native_install gamemode mangohud wine winetricks cabextract p7zip-full unzip curl tar vulkan-tools || true
+      native_install gamemode mangohud wine winetricks cabextract p7zip-full unzip curl tar vulkan-tools
       ;;
     debian)
-      native_install gamemode mangohud wine winetricks cabextract p7zip-full unzip curl tar || true
+      native_install gamemode mangohud wine winetricks cabextract p7zip-full unzip curl tar
       ;;
     opensuse*|sles)
-      native_install gamemode mangohud wine cabextract p7zip unzip curl tar vulkan-tools || true
+      native_install gamemode mangohud wine cabextract p7zip unzip curl tar vulkan-tools
       ;;
   esac
 fi
 
 # ---------- Frontends (smart native > flatpak) ----------
 echo "[3/8] Ensuring launchers…"
-# Rely on ensure_app to try native first and fall back to Flatpak where needed
-ensure_app "Steam"   "steam"   "com.valvesoftware.Steam"         steam
+# Provide multiple native names where they differ by distro
+ensure_app "Steam"   "steam"   "com.valvesoftware.Steam"         steam steam-installer
 ensure_app "Discord" "discord" "com.discordapp.Discord"          discord
-# Heroic native names vary by distro
 ensure_app "Heroic"  "heroic"  "com.heroicgameslauncher.hgl"     heroic heroic-games-launcher heroic-games-launcher-bin
 ensure_app "Lutris"  "lutris"  "net.lutris.Lutris"               lutris
 
 # ---------- Proton tools ----------
 echo "[4/8] Proton tools…"
 if [[ $INSTALL_PROTONPLUS -eq 1 && $FLATPAK_ONLY -eq 0 ]]; then
-  case "$ID" in fedora) native_install protonplus || true ;; esac
+  case "$ID" in fedora) native_install protonplus ;; esac
 fi
 [[ $INSTALL_PROTONUPQT -eq 1 ]] && flatpak_install_user net.davidotek.pupgui2 || true
 
