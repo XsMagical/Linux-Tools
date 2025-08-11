@@ -74,6 +74,11 @@ chmod +x tn_xs_post_install.sh
 ~/scripts/tn_xs_post_install.sh -y full
 ```
 
+## 🕹️ Full + Gaming
+```bash
+~/scripts/tn_xs_post_install.sh -y full && ~/scripts/tn_xs_post_install.sh -y gaming
+```
+
 > Need more output for troubleshooting? Add `--verbose` to any command:
 ```bash
 ~/scripts/tn_xs_post_install.sh -y --verbose full
