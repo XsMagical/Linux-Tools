@@ -161,6 +161,26 @@ enable_rpmfusion() {
   checkmark "RPM Fusion ensured"
 }
 
+# ================== Debian Repo Components Helper ==================
+# Enable contrib/non-free/non-free-firmware so Steam/Lutris/Winetricks resolve
+ensure_debian_components() {
+  [[ "$DISTRO" != "debian" ]] && return 0
+
+  # If any source already includes contrib/non-free, skip
+  if grep -RqsE '^\s*deb\s+[^#]+\s+\S+\s+.*\b(contrib|non-free)\b' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null; then
+    info "Debian sources already include contrib/non-free; skipping"
+    return 0
+  fi
+
+  info "Enabling Debian contrib/non-free/non-free-firmware components"
+  ${SUDO} sed -i -E 's/^(deb\s+[^#]+\s+\S+\s+main)(\s.*)?$/\1 contrib non-free non-free-firmware\2/' /etc/apt/sources.list || true
+  for f in /etc/apt/sources.list.d/*.list; do
+    [[ -f "$f" ]] || continue
+    ${SUDO} sed -i -E 's/^(deb\s+[^#]+\s+\S+\s+main)(\s.*)?$/\1 contrib non-free non-free-firmware\2/' "$f" || true
+  done
+  ${SUDO} apt-get update -y || true
+}
+
 # ================== Package Lists ==================
 add_general_packages() {
   case "$DISTRO" in
@@ -170,7 +190,7 @@ add_general_packages() {
     ) ;;
     debian) PKGS+=(
       curl wget git vim nano htop unzip zip tar rsync jq ripgrep fzf tree fastfetch
-      net-tools iproute2 dnsutils bc
+      net-tools iproute2 dnsutils bc flatpak util-linux
     ) ;;
     arch) PKGS+=(
       curl wget git vim nano htop unzip zip tar rsync jq ripgrep fzf tree fastfetch
@@ -212,7 +232,6 @@ add_media_packages() {
   esac
 }
 
-
 add_devvirt_packages() {
   case "$DISTRO" in
     fedora)   PKGS+=( gcc make cmake clang pkgconf kernel-headers kernel-devel qemu-kvm libvirt virt-install virt-manager edk2-ovmf ) ;;
@@ -226,6 +245,15 @@ add_devvirt_packages() {
 run_gaming_preset() {
   step "Gaming preset selected"
   local local_script="${HOME}/scripts/universal_gaming_setup.sh"
+
+  # Debian: ensure APT components + needed tools
+  if [[ "$DISTRO" == "debian" ]]; then
+    ensure_debian_components
+    pm_refresh
+    pm_install util-linux flatpak   # 'runuser' from util-linux; Flatpak fallback for some apps
+  fi
+
+  # Fetch gaming script if missing
   if [[ ! -x "$local_script" ]]; then
     info "Fetching universal_gaming_setup.sh from GitHub (raw)"
     mkdir -p "${HOME}/scripts" || true
@@ -234,8 +262,8 @@ run_gaming_preset() {
   fi
 
   if [[ -x "$local_script" ]]; then
-    # IMPORTANT: run via sudo; do NOT pass -y/--verbose (gaming script doesn't accept them and uses runuser)
-    ${SUDO:-sudo} "$local_script"
+    # IMPORTANT: add sbin so 'runuser' resolves on Debian/Ubuntu; do NOT pass -y/--verbose
+    PATH="/usr/sbin:/sbin:${PATH}" ${SUDO:-sudo} "$local_script"
     rc=$?
     if (( rc != 0 )); then
       warn "Gaming script returned ${rc}"
@@ -245,6 +273,7 @@ run_gaming_preset() {
     crossmark "Could not obtain universal_gaming_setup.sh"
   fi
 }
+
 # ================== Preset Runners ==================
 run_media_preset()   { PKGS=(); add_media_packages;   pm_refresh; pm_install "${PKGS[@]}"; checkmark "Media tools attempted"; }
 run_general_preset() { PKGS=(); add_general_packages; pm_refresh; pm_install "${PKGS[@]}"; checkmark "General tools attempted"; }
@@ -275,10 +304,8 @@ run_full_preset() {
 
   # Fedora/RHEL (modular daemons) vs Debian/Ubuntu/openSUSE/Arch (monolithic libvirtd)
   if systemctl list-unit-files --type=socket | grep -q '^virtqemud\.socket'; then
-    # Modular
     ${SUDO} systemctl enable --now virtqemud.socket virtqemud-ro.socket virtqemud-admin.socket || true
   else
-    # Monolithic
     ${SUDO} systemctl enable --now libvirtd.socket libvirtd.service || true
   fi
 
@@ -292,9 +319,6 @@ run_full_preset() {
 
   checkmark "Dev/Virtualization stack attempted"
 }
-
-
-
 
 # ================== Pre-flight (Fedora) ==================
 [[ "$DISTRO" == "fedora" ]] && enable_rpmfusion
