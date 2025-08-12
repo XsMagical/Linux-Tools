@@ -13,6 +13,7 @@ Linux Tools is a collection of cross-distro automation scripts designed to make 
 - **What it offers:**
   - Universal **post-install presets** (Gaming, Media, General, Lite, Full)
   - Automated **gaming environment setup** (Steam, Lutris/Heroic, Proton helpers, MangoHud, GameMode, etc.)
+  - **NVIDIA Driver Installation (Signed/Unsigned)** with Secure Boot MOK support — [Wiki: NVIDIA Driver Installer](https://github.com/XsMagical/Linux-Tools/wiki/NVIDIA-Driver-Installer)
   - **System cleanup utilities** for safe removal of cache, unused packages, and more
   - **Update helpers** for keeping your system current
   - Cross-distro compatibility (Fedora/RHEL, Ubuntu/Debian, Arch, openSUSE)
@@ -37,6 +38,8 @@ scripts/
     ...                            # Update and maintenance helpers
   cleanup/
     ...                            # Cleanup utilities
+  drivers/
+    tn_universal_nvidia_signed.sh # Universal NVIDIA driver install with Secure Boot support
   common/
     header.sh                      # Shared banner/colors and helper functions
 
@@ -48,3 +51,10 @@ scripts/
 - **Gaming:** https://github.com/XsMagical/Linux-Tools/tree/main/scripts/gaming
 - **Update:** https://github.com/XsMagical/Linux-Tools/tree/main/scripts/update
 - **Cleanup:** https://github.com/XsMagical/Linux-Tools/tree/main/scripts/cleanup
+- **Drivers (NVIDIA Installer):** https://github.com/XsMagical/Linux-Tools/tree/main/scripts/drivers
+
+---
+
+## Wiki References
+
+- **Full Linux Tools Wiki:** https://github.com/XsMagical/Linux-Tools/wiki
