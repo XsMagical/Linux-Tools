@@ -1,78 +1,132 @@
-# Universal Linux Cleanup Script (`universal_cleanup.sh`)
+# Universal Linux Cleanup Script
 
-~~~text
-████████╗███╗   ██╗
-╚══██╔══╝████╗  ██║
-   ██║   ██╔██╗ ██║
-   ██║   ██║╚██╗██║
-   ██║   ██║ ╚████║
-   ╚═╝   ╚═╝  ╚═══╝
-----------------------------------------------------------
-   Team-Nocturnal.com Universal Cleanup Script by XsMagical
-----------------------------------------------------------
-~~~
+A simple **helper script** for Linux that works across **Fedora/RHEL**, **Debian/Ubuntu**, **Arch**, and **openSUSE**.
 
-**Safe-by-default cleanup** for Debian/Ubuntu (APT), Fedora/RHEL (DNF), and Arch/Manjaro (Pacman).  
-Optional extras include Flatpak/Snap tidying, Steam shader cache cleanup, dev tool cache purges, and Docker pruning.
+It offers ready-made presets for **Safe, Aggressive, Steam Cache, Docker, Combined Aggressive + Steam + Docker**.
+
+> ✅ Safe by design: doesn’t exit on the first error, logs everything to `~/scripts/logs/`, and keeps going if a repo/package is missing.
 
 ---
 
-## 📌 Overview
+## ⚠️ Heads-up: if `wget` isn’t installed
 
-This script provides a safe and universal way to clean up your Linux system without breaking anything important. It detects your package manager (APT, DNF, Pacman) and removes:
+Some fresh installs don’t include `wget`. If the commands below fail with “wget: command not found”, install it first:
 
-- Orphaned and unneeded packages  
-- Old package caches  
-- Unused Flatpak runtimes/apps  
-- Disabled Snap revisions  
-- Old logs and journal files  
-- User thumbnail and trash files  
-- Dev caches (pip, npm, yarn, cargo)  
-- *(Optional)* Steam shader/GPU caches  
-- *(Optional)* Docker unused images/containers/volumes
+**Fedora / RHEL (dnf or dnf5)**
+```bash
+sudo dnf install -y wget    # or: sudo dnf5 install -y wget
+```
 
-It works safely out of the box, with optional flags for more aggressive cleaning.
+**Ubuntu / Debian**
+```bash
+sudo apt-get update && sudo apt-get install -y wget
+```
+
+**Arch**
+```bash
+sudo pacman -Sy --needed wget
+```
+
+**openSUSE**
+```bash
+sudo zypper install -y wget
+```
 
 ---
 
-## 📂 Script Source
+## 🚀 Quick Start (wget-style copy & paste)
 
-View or download here:  
-`https://github.com/XsMagical/Linux-Tools/blob/main/scripts/cleanup/universal_cleanup.sh`
+> These commands save the script to `~/scripts/` so you can run it again later. Paste them exactly into your terminal.
+
+### One-time download
+```bash
+mkdir -p ~/scripts
+cd ~/scripts
+wget -O universal_cleanup.sh https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh
+chmod +x universal_cleanup.sh
+```
+
+### Run a preset (choose one)
+```bash
+~/scripts/universal_cleanup.sh -y (plus optional flags)
+```
 
 ---
 
-## ▶️ One-Line Usage (Run Directly from GitHub)
+## Presets
 
-**1) Safe default cleanup (recommended for first run)**
+- **Safe** — Performs safe default cleanup without removing critical files.
+- **Aggressive** — Deeper cache purge including APT/DNF/Pacman caches, npm, yarn, cargo, etc.
+- **Steam Cache** — Clears Steam shader and GPU shader caches without touching games/configs.
+- **Docker** — Removes all unused images, containers, networks, and dangling volumes.
+- **Combined** — Aggressive + Steam Cache + Docker in one run.
 
-~~~bash
-bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh) --yes
-~~~
+---
 
-**2) Aggressive cleanup (deeper cache removal)**
+## 🔧 Usage & Options
 
-~~~bash
-bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh) --yes --aggressive --journal-days=7
-~~~
+```bash
+~/scripts/universal_cleanup.sh [options]
+```
 
-**3) Add Steam cache cleanup (safe: games/configs untouched)**
+```text
+--yes              Non-interactive (auto-confirm where possible)
+--dry-run          Show what would run; make no changes
 
-~~~bash
-bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh) --yes --steam-cache
-~~~
+--aggressive       Deeper cache purge:
+                   • DNF: 'dnf clean all'
+                   • Pacman: paccache keep=1 (or 'pacman -Scc' fallback)
+                   • npm: 'npm cache clean --force'
+--journal-days=N   Vacuum systemd journals to N days (default: 14)
 
-**4) Docker cleanup (removes ALL unused images, containers, volumes)**
+--steam-cache      Clear Steam shader caches and GPU shader caches (safe)
+--docker           Run 'docker system prune' to remove ALL unused:
+                   images, containers, networks, and dangling volumes
 
-~~~bash
-bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh) --yes --docker
-~~~
+--no-flatpak       Skip Flatpak cleanup
+--no-snap          Skip Snap cleanup
 
-**5) Combine aggressive + Steam + Docker**
+-h, --help         Show help
+```
 
-~~~bash
-bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh) --yes --aggressive --journal-days=7 --steam-cache --docker
-~~~
+---
+
+## 🧼 What It Cleans
+
+- **System packages**
+  - **APT:** `autoremove --purge`, then `autoclean` (or `clean` with `--aggressive`).
+  - **DNF:** `dnf autoremove`, then `dnf clean packages` (or `clean all` with `--aggressive`).
+  - **Pacman:** remove orphans (`pacman -Rns …`), then trim caches with `paccache` (keep 3 by default, keep 1 with `--aggressive`). Falls back to `pacman -Sc/-Scc` if `paccache` is missing.
+
+- **Runtimes & storefronts**
+  - **Flatpak:** `flatpak uninstall --unused` + appstream refresh (optional `flatpak repair` with `--aggressive`).
+  - **Snap:** clean disabled/obsolete revisions (skippable with `--no-snap`).
+
+- **System logs**
+  - **journald:** vacuum to N days (default **14**).
+  - Rotated `.gz` logs in `/var/log` older than 30 days.
+
+- **User caches**
+  - Thumbnail cache, Trash (`~/.local/share/Trash`).
+
+- **Dev/tool caches (auto-detected)**
+  - `pip`/`pip3` cache purge, `npm cache verify` (or `npm cache clean --force` with `--aggressive`), `yarn cache clean`, `cargo-cache -a` (if installed).
+
+- **Optional**
+  - **Steam:** clear shader caches (safe) plus GPU shader caches with `--steam-cache`.
+  - **Docker:** `docker system prune` (prompts unless `--yes`) with `--docker`.
+
+---
+
+## Logging & re-running
+
+- Logs are written to: `~/scripts/logs/universal_cleanup_YYYYMMDD_HHMMSS.log`
+- It’s safe to **re-run** any preset; already-installed items are skipped.
+
+```bash
+# View your most recent logs
+ls -lt ~/scripts/logs | head -n 5
+```
 
 ---
 
@@ -121,90 +175,89 @@ chmod +x ~/scripts/universal_cleanup.sh
 
 ---
 
-## 🔧 Usage & Options
+## ▶️ One-Line Usage (Run Directly from GitHub)
+
+**1) Safe default cleanup (recommended for first run)**
 
 ~~~bash
-~/scripts/universal_cleanup.sh [options]
+bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh) --yes
 ~~~
 
-~~~text
---yes              Non-interactive (auto-confirm where possible)
---dry-run          Show what would run; make no changes
+**2) Aggressive cleanup (deeper cache removal)**
 
---aggressive       Deeper cache purge:
-                   • DNF: 'dnf clean all'
-                   • Pacman: paccache keep=1 (or 'pacman -Scc' fallback)
-                   • npm: 'npm cache clean --force'
---journal-days=N   Vacuum systemd journals to N days (default: 14)
+~~~bash
+bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh) --yes --aggressive --journal-days=7
+~~~
 
---steam-cache      Clear Steam shader caches and GPU shader caches (safe)
---docker           Run 'docker system prune' to remove ALL unused:
-                   images, containers, networks, and dangling volumes
+**3) Add Steam cache cleanup (safe: games/configs untouched)**
 
---no-flatpak       Skip Flatpak cleanup
---no-snap          Skip Snap cleanup
+~~~bash
+bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh) --yes --steam-cache
+~~~
 
--h, --help         Show help
+**4) Docker cleanup (removes ALL unused images, containers, volumes)**
+
+~~~bash
+bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh) --yes --docker
+~~~
+
+**5) Combine aggressive + Steam + Docker**
+
+~~~bash
+bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh) --yes --aggressive --journal-days=7 --steam-cache --docker
 ~~~
 
 ---
 
-## 🧼 What It Cleans
 
-- **System packages**
-  - **APT:** `autoremove --purge`, then `autoclean` (or `clean` with `--aggressive`).
-  - **DNF:** `dnf autoremove`, then `dnf clean packages` (or `clean all` with `--aggressive`).
-  - **Pacman:** remove orphans (`pacman -Rns …`), then trim caches with `paccache` (keep 3 by default, keep 1 with `--aggressive`). Falls back to `pacman -Sc/-Scc` if `paccache` is missing.
+## Supported distros (auto-detected)
 
-- **Runtimes & storefronts**
-  - **Flatpak:** `flatpak uninstall --unused` + appstream refresh (optional `flatpak repair` with `--aggressive`).
-  - **Snap:** clean disabled/obsolete revisions (skippable with `--no-snap`).
-
-- **System logs**
-  - **journald:** vacuum to N days (default **14**).
-  - Rotated `.gz` logs in `/var/log` older than 30 days.
-
-- **User caches**
-  - Thumbnail cache, Trash (`~/.local/share/Trash`).
-
-- **Dev/tool caches (auto-detected)**
-  - `pip`/`pip3` cache purge, `npm cache verify` (or `npm cache clean --force` with `--aggressive`), `yarn cache clean`, `cargo-cache -a` (if installed).
-
-- **Optional**
-  - **Steam:** clear shader caches (safe) plus GPU shader caches with `--steam-cache`.
-  - **Docker:** `docker system prune` (prompts unless `--yes`) with `--docker`.
-
----
-
-## 🖥️ Supported Distros
-
-- **Debian/Ubuntu** (APT)
-- **Fedora/RHEL** (DNF/dnf5)
-- **Arch/Manjaro** (Pacman, optional `paccache`)
+- **Fedora** / RHEL family (DNF / DNF5)
+- **Ubuntu / Debian** (APT)
+- **Arch** (pacman, optional `paccache`)
+- **openSUSE** (zypper)
 
 > **Pacman tip:** If `paccache` is missing, install `pacman-contrib`:
 >
-> ~~~bash
+> ```bash
 > sudo pacman -Syu --needed pacman-contrib
-> ~~~
+> ```
 
 ---
 
-## 🗂️ Logs & Exit Codes
+## Notes for new users
 
-- **Logs:** `~/cleanup_logs/clean-YYYYMMDD-HHMM.log`  
-- **Exit codes:** `0` success, `1` error
-
----
-
-## ⚠ Notes
-
-- Does **NOT** remove kernels — leave kernel management to your package manager.
-- Designed for Fedora, Ubuntu/Debian, and Arch/Manjaro.
-- Safe defaults — only cleans more aggressively when you add flags.
-- Keeps a log in `~/cleanup_logs` for every run.
-- All scripts in this repo are intended to live under `~/scripts`.
+- You’ll likely be asked for your **password** — that’s `sudo` asking to install packages.
+- Seeing **“already installed”** or **“skipped”** messages is normal.
+- If a repo or package is missing on your distro, the script **continues** and logs it.
 
 ---
 
-**Enjoy your cleaner, faster Linux system!**
+**Made by XsMagical — Team Nocturnal**  
+If something doesn’t work on your distro, open an issue with your distro/version and the latest log from `~/scripts/logs/`.
+
+---
+
+## License
+
+MIT License
+
+Copyright (c) 2025 XsMagical — Team Nocturnal
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the “Software”), to deal
+in the Software without restriction, including without limitation the rights  
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell  
+copies of the Software, and to permit persons to whom the Software is  
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in  
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR  
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,  
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE  
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER  
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,  
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN  
+THE SOFTWARE.
