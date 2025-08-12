@@ -127,13 +127,13 @@ sudo reboot
 
 After installation, you can verify the installed NVIDIA driver version:
 
-```bash
 **If `nvidia-smi` is available (most systems):**
+```bash
 nvidia-smi --query-gpu=driver_version,name --format=csv,noheader
 ```
 
-```bash
 **If `nvidia-smi` is NOT available:**
+```bash
 modinfo nvidia | grep -E 'version:|signer|sig_key|sig_hash'
 ```
 
