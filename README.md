@@ -51,7 +51,7 @@ scripts/
 - **Gaming:** https://github.com/XsMagical/Linux-Tools/tree/main/scripts/gaming
 - **Update:** https://github.com/XsMagical/Linux-Tools/tree/main/scripts/update
 - **Cleanup:** https://github.com/XsMagical/Linux-Tools/tree/main/scripts/cleanup
-- **Drivers (NVIDIA Installer):** https://github.com/XsMagical/Linux-Tools/tree/main/scripts/drivers
+- **Drivers (NVIDIA Installer):** https://github.com/XsMagical/Linux-Tools/tree/main/scripts/Nvidia-Drivers
 
 ---
 
