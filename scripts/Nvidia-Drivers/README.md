@@ -1,52 +1,78 @@
 # Team Nocturnal — Universal NVIDIA (Signed) Installer
 
 **What this is:**  
-A **cross‑distro NVIDIA installer** that prefers **vendor‑signed drivers** where available (Ubuntu/Pop), and automatically handles **DKMS + Secure Boot (MOK) signing** when needed (Fedora/Arch/Debian paths). It also takes care of **nouveau** blacklisting and **kernel boot flags** (optional via flags).
+A **cross-distro NVIDIA installer** that prefers **vendor-signed drivers** where available (Ubuntu/Pop), and automatically handles **DKMS + Secure Boot (MOK) signing** when needed (Fedora/Arch/Debian paths). It also takes care of **nouveau** blacklisting and **kernel boot flags** (optional via flags).
 
 **Who this is for:**  
 - Users who want a **clean, reliable NVIDIA install** across Fedora/RHEL, Ubuntu/Debian, and Arch/Manjaro.  
 - Systems with **Secure Boot ON** that need signed kernel modules.  
-- Anyone who wants a **safe, re‑runnable** setup script with sensible defaults and easy flags.
+- Anyone who wants a **safe, re-runnable** setup script with sensible defaults and easy flags.
+
+---
+
+## ⚠️ Heads-up: if `wget` isn’t installed
+
+Some fresh installs don’t include `wget`. If the commands below fail with “wget: command not found”, install it first:
+
+**Fedora / RHEL (dnf or dnf5)**
+```bash
+sudo dnf install -y wget    # or: sudo dnf5 install -y wget
+```
+
+**Ubuntu / Debian**
+```bash
+sudo apt-get update && sudo apt-get install -y wget
+```
+
+**Arch**
+```bash
+sudo pacman -Sy --needed wget
+```
+
+**openSUSE**
+```bash
+sudo zypper install -y wget
+```
 
 ---
 
 ## 📁 Repo & Location
 
 - GitHub Repo: `https://github.com/XsMagical/Linux-Tools`  
-- Local path (recommended): `~/scripts/tn_universal_nvidia_signed.sh`  
-- Make it executable: `chmod +x ~/scripts/tn_universal_nvidia_signed.sh`
+- Script Path in Repo: `scripts/Nvidia-Drivers/tn_universal_nvidia_signed.sh`  
+- Direct download with `wget`:
+```bash
+wget -O ~/scripts/tn_universal_nvidia_signed.sh https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/Nvidia-Drivers/tn_universal_nvidia_signed.sh
+chmod +x ~/scripts/tn_universal_nvidia_signed.sh
+```
 
 ---
 
 ## ✅ What it does (by distro)
 
 - **Fedora/RHEL**: Enables **RPM Fusion**, installs **akmods** + NVIDIA stack, builds modules, optional local MOK signing if vendor signing isn’t present, updates boot flags, enables persistence services.  
-- **Ubuntu/Pop/Debian**: Uses **ubuntu‑drivers** (when available) to install **vendor‑signed** drivers. Falls back to `nvidia-driver` + DKMS; handles MOK signing if Secure Boot is on and modules are unsigned.  
-- **Arch/Manjaro**: Installs `nvidia-dkms` + headers; signs DKMS‑built modules via MOK when Secure Boot is on; updates boot flags; optional services.
+- **Ubuntu/Pop/Debian**: Uses **ubuntu-drivers** (when available) to install **vendor-signed** drivers. Falls back to `nvidia-driver` + DKMS; handles MOK signing if Secure Boot is on and modules are unsigned.  
+- **Arch/Manjaro**: Installs `nvidia-dkms` + headers; signs DKMS-built modules via MOK when Secure Boot is on; updates boot flags; optional services.
 
-**Safe to re‑run**: Skips existing work where possible, won’t break if repos or drivers already exist.
+**Safe to re-run**: Skips existing work where possible, won’t break if repos or drivers already exist.
 
 ---
 
 ## 🚀 Quick Start
 
-
-Save script into ~/scripts and make executable
+1) Download & make executable
 ```bash
 mkdir -p ~/scripts
-nano ~/scripts/tn_universal_nvidia_signed.sh   # paste script, save
+wget -O ~/scripts/tn_universal_nvidia_signed.sh https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/Nvidia-Drivers/tn_universal_nvidia_signed.sh
 chmod +x ~/scripts/tn_universal_nvidia_signed.sh
 ```
 
-
-Run
+2) Run
 ```bash
 sudo ~/scripts/tn_universal_nvidia_signed.sh -y
 ```
 
-
-Reboot when finished (and enroll MOK if prompted during boot)
-
+3) Reboot when finished (and enroll MOK if prompted during boot)
 
 - **Secure Boot ON?** If the script imports a new MOK, you’ll be prompted at next boot to **Enroll MOK** → choose **Enroll**, then **Continue**.
 
@@ -113,7 +139,7 @@ sudo ~/scripts/tn_universal_nvidia_signed.sh -y --skip-repos
 
 ## 🔐 Secure Boot & MOK Notes
 
-- **Ubuntu/Pop** generally provide **vendor‑signed** modules, so local signing usually isn’t required.  
+- **Ubuntu/Pop** generally provide **vendor-signed** modules, so local signing usually isn’t required.  
 - On **Fedora/Arch/Debian** paths with **DKMS**, Secure Boot will reject unsigned modules. The script can generate a **MOK key** and sign locally.  
 - If a new MOK is imported, **reboot → Enroll MOK** (single-time action).
 
@@ -130,50 +156,4 @@ modinfo nvidia | grep -E 'signer|sig_key|sig_hash' || true
 - **No Enroll prompt after reboot:** Some firmwares hide it; power off fully, then boot again. Ensure `mokutil --import` didn’t error.  
 - **NVIDIA modules not loading (SB ON):** Run `sudo dmesg | grep -i nvidia` and confirm `modinfo nvidia` shows a signer. If unsigned, re-run with `--force-mok-reimport` and reboot to enroll.  
 - **Wayland/black screen:** Try disabling Wayland or ensure `nvidia_drm.modeset=1` is present (unless you passed `--no-modeset`).  
-- **GRUB vs systemd‑boot:** Script auto-detects and updates the correct boot config; use `--force-initramfs` if you need a fresh image.
-
----
-
-## ❌ Uninstall (manual, brief)
-
-> Tip: Keep your display stack in mind; removing NVIDIA on a Wayland desktop mid‑session can be messy. Use a TTY (Ctrl+Alt+F3).
-
-- **Fedora/RHEL (RPM Fusion):**
-```bash
-sudo dnf remove -y xorg-x11-drv-nvidia\* nvidia-settings nvidia-persistenced
-sudo rm -f /etc/modprobe.d/blacklist-nouveau.conf
-# Optional: remove added kernel params and rebuild configs (grub2-mkconfig/bootctl).
-```
-
-- **Ubuntu/Pop/Debian:**
-```bash
-sudo apt-get remove --purge -y '^nvidia-.*' nvidia-settings nvidia-persistenced
-sudo rm -f /etc/modprobe.d/blacklist-nouveau.conf
-sudo update-initramfs -u -k all
-sudo update-grub
-```
-
-- **Arch/Manjaro:**
-```bash
-sudo pacman -Rns --noconfirm nvidia-dkms nvidia-utils nvidia-settings
-sudo rm -f /etc/modprobe.d/blacklist-nouveau.conf
-sudo mkinitcpio -P
-```
-
-Then **reboot**.
-
----
-
-## 🧷 Notes & Guarantees
-
-- Script is **idempotent** and designed to be **safe to re‑run**.  
-- Respects `--skip-repos` and won’t touch repositories if you don’t want it to.  
-- If you manage boot params yourself, use `--no-blacklist` and `--no-modeset`.  
-- If vendor-signed modules are already present, **local signing is skipped**.
-
----
-
-## 🖊 Author & Credits
-
-- Team Nocturnal — **XsMagical**  
-- GitHub: `https://github.com/XsMagical/Linux-Tools`
+- **GRUB vs systemd-boot:** Script auto-detects and updates the correct boot config; use `--force-initramfs` if you need a fresh image.
