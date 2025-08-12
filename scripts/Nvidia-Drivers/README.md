@@ -123,6 +123,24 @@ sudo reboot
 
 ---
 
+## 🔍 Check Current Driver Version
+
+After installation, you can verify the installed NVIDIA driver version:
+
+```bash
+**If `nvidia-smi` is available (most systems):**
+nvidia-smi --query-gpu=driver_version,name --format=csv,noheader
+```
+
+```bash
+**If `nvidia-smi` is NOT available:**
+modinfo nvidia | grep -E 'version:|signer|sig_key|sig_hash'
+```
+
+This will also show whether the module is vendor-signed or signed with a Machine Owner Key (MOK).
+
+---
+
 ## 🩺 Troubleshooting
 
 - **No Enroll prompt after reboot:** Some firmwares hide it; power off fully, then boot again. Ensure `mokutil --import` didn’t error.  
