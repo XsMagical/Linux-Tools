@@ -132,8 +132,15 @@ ARCH="$(uname -m)"
 case "$ARCH" in aarch64|armv7*|armhf|arm64) INSTALL_STEAM=0 ;; esac
 
 # ===== Package helpers =====
-DNF_FLAGS="-y --setopt=install_weak_deps=False --best --allowerasing --refresh"
-[[ $VERBOSE -eq 1 ]] && DNF_FLAGS="$DNF_FLAGS -v"
+# Refactor DNF handling to support dnf5 (flags must follow subcommand)
+if command -v dnf5 >/dev/null 2>&1; then
+  DNF_CMD="dnf5"
+else
+  DNF_CMD="dnf"
+fi
+DNF_INSTALL_FLAGS="install -y --setopt=install_weak_deps=False --best --refresh --allowerasing"
+[[ $VERBOSE -eq 1 ]] && DNF_INSTALL_FLAGS="$DNF_INSTALL_FLAGS -v"
+
 APT_INSTALL_FLAGS="-y -o Dpkg::Options::=--force-confnew"
 [[ $VERBOSE -eq 1 ]] && APT_INSTALL_FLAGS="$APT_INSTALL_FLAGS -V"
 PACMAN_FLAGS="--needed --noconfirm"
@@ -148,7 +155,7 @@ fp_remove() { flatpak_user uninstall -y --delete-data "$@" || true; }
 
 ensure_rpmfusion() {
   if ! rpm -q rpmfusion-free-release >/dev/null 2>&1; then
-    sudo dnf ${DNF_FLAGS} install \
+    sudo "$DNF_CMD" $DNF_INSTALL_FLAGS \
       "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm" \
       "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm"
   fi
@@ -166,7 +173,7 @@ ensure_debian_components() {
 
 install_native() {
   case "${ID_LIKE:-$ID}" in
-    *fedora*|*rhel*)   sudo dnf ${DNF_FLAGS} install "$@" ;;
+    *fedora*|*rhel*)   sudo "$DNF_CMD" $DNF_INSTALL_FLAGS "$@" ;;
     *debian*|*ubuntu*) sudo apt-get ${APT_INSTALL_FLAGS} install "$@" ;;
     *arch*|*manjaro*)  sudo pacman -S ${PACMAN_FLAGS} "$@" ;;
     *suse*|*opensuse*) sudo zypper --non-interactive in "$@" ;;
@@ -279,8 +286,8 @@ install_proton_helpers() {
   case "${ID_LIKE:-$ID}" in
     *fedora*|*rhel*)
       if [[ $INSTALL_PROTONPLUS -eq 1 && ! $(command -v protonplus) ]]; then
-        sudo dnf -y copr enable wehagy/protonplus || true
-        sudo dnf ${DNF_FLAGS} install protonplus || true
+        sudo "$DNF_CMD" -y copr enable wehagy/protonplus || true
+        sudo "$DNF_CMD" $DNF_INSTALL_FLAGS protonplus || true
       fi
       ;;
   esac
