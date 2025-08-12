@@ -184,7 +184,7 @@ If you want to install the **latest upstream NVIDIA driver** directly from NVIDI
 
 **Steps:**
 
-- 1) Download the official NVIDIA 580.76.05 driver
+- 1) Download the official NVIDIA 580.76.05 driver (THIS WILL BREAK SECUREBOOT) 
 ```bash
 wget https://us.download.nvidia.com/XFree86/Linux-x86_64/580.76.05/NVIDIA-Linux-x86_64-580.76.05.run -O NVIDIA-Linux-x86_64-580.76.05.run
 ```
