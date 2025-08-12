@@ -116,7 +116,9 @@ Overlays are now **strictly per-game** to avoid conflicts with non-gaming apps l
 ```bash
 # Full bundle, native-only, verbose
 ./universal_gaming_setup.sh --bundle=full --native-only --verbose -y
+```
 
+```bash
 # Flatpak-only setup, skip Discord
 ./universal_gaming_setup.sh --flatpak-only --no-discord -y
 ```
