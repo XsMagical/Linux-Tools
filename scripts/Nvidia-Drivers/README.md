@@ -10,6 +10,7 @@ A **cross-distro NVIDIA installer** that prefers **vendor-signed drivers** where
 
 ---
 
+
 ## ⚠️ Heads-up: if `wget` isn’t installed
 
 Some fresh installs don’t include `wget`. If the commands below fail with “wget: command not found”, install it first:
@@ -41,6 +42,11 @@ sudo zypper install -y wget
 - GitHub Repo: `https://github.com/XsMagical/Linux-Tools`  
 - Script Path in Repo: `scripts/Nvidia-Drivers/tn_universal_nvidia_signed.sh`  
 - Direct download with `wget`:
+```bash
+mkdir -p ~/scripts
+wget -O ~/scripts/tn_universal_nvidia_signed.sh https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/Nvidia-Drivers/tn_universal_nvidia_signed.sh
+chmod +x ~/scripts/tn_universal_nvidia_signed.sh
+```
 
 ---
 
@@ -54,7 +60,7 @@ sudo zypper install -y wget
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start (repo-safe install)
 
 1) Download & make executable
 ```bash
@@ -94,56 +100,30 @@ sudo ~/scripts/tn_universal_nvidia_signed.sh -y
 
 ---
 
-## 🧪 Examples
+## ⚠️ Important Warnings
+- Installing the **latest NVIDIA driver from your distro repos** is generally safe and tested.  
+- Installing from **NVIDIA’s official site (.run file)**, such as the one linked below, can provide the **absolute newest driver**, but may cause breakage on some kernels or desktop environments, especially with Secure Boot enabled.  
+- Only advanced users who know how to roll back drivers or sign modules manually should install this way.
 
-**Fedora/Ubuntu/Arch — full automatic (recommended):**
+**Latest official NVIDIA driver (.run)** — version **580.76.05**:  
+https://us.download.nvidia.com/XFree86/Linux-x86_64/580.76.05/NVIDIA-Linux-x86_64-580.76.05.run
+
+**To install this driver manually (advanced users only):**
 ```bash
-sudo ~/scripts/tn_universal_nvidia_signed.sh -y
+# Download
+wget https://us.download.nvidia.com/XFree86/Linux-x86_64/580.76.05/NVIDIA-Linux-x86_64-580.76.05.run -O NVIDIA-Linux-x86_64-580.76.05.run
+chmod +x NVIDIA-Linux-x86_64-580.76.05.run
+
+# Switch to a TTY and stop graphical session
+sudo systemctl isolate multi-user.target
+
+# Run installer
+sudo ./NVIDIA-Linux-x86_64-580.76.05.run --dkms
+
+# Reboot
+sudo reboot
 ```
-
-**Install drivers only (no blacklist, no boot flags, no signing/services):**
-```bash
-sudo ~/scripts/tn_universal_nvidia_signed.sh -y --install-only
-```
-
-**Configure system only (e.g., after manual driver install):**
-```bash
-sudo ~/scripts/tn_universal_nvidia_signed.sh --configure-only
-```
-
-**Review plan without changing anything:**
-```bash
-sudo ~/scripts/tn_universal_nvidia_signed.sh --dry-run
-```
-
-**Secure Boot: regenerate & re-import MOK, then force initramfs:**
-```bash
-sudo ~/scripts/tn_universal_nvidia_signed.sh -y --force-mok-reimport --force-initramfs
-```
-
-**Keep nouveau (not recommended) and skip modeset flag:**
-```bash
-sudo ~/scripts/tn_universal_nvidia_signed.sh --no-blacklist --no-modeset
-```
-
-**Leave repos alone (useful on tightly controlled systems):**
-```bash
-sudo ~/scripts/tn_universal_nvidia_signed.sh -y --skip-repos
-```
-
----
-
-## 🔐 Secure Boot & MOK Notes
-
-- **Ubuntu/Pop** generally provide **vendor-signed** modules, so local signing usually isn’t required.  
-- On **Fedora/Arch/Debian** paths with **DKMS**, Secure Boot will reject unsigned modules. The script can generate a **MOK key** and sign locally.  
-- If a new MOK is imported, **reboot → Enroll MOK** (single-time action).
-
-Check signing state:
-```bash
-mokutil --sb-state
-modinfo nvidia | grep -E 'signer|sig_key|sig_hash' || true
-```
+⚠️ **Warning:** This will overwrite your existing NVIDIA driver installation and bypass package manager updates. Secure Boot users must manually sign the installed kernel modules.
 
 ---
 
