@@ -42,11 +42,7 @@ sudo zypper install -y wget
 - GitHub Repo: `https://github.com/XsMagical/Linux-Tools`  
 - Script Path in Repo: `scripts/Nvidia-Drivers/tn_universal_nvidia_signed.sh`  
 - Direct download with `wget`:
-```bash
-mkdir -p ~/scripts
-wget -O ~/scripts/tn_universal_nvidia_signed.sh https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/Nvidia-Drivers/tn_universal_nvidia_signed.sh
-chmod +x ~/scripts/tn_universal_nvidia_signed.sh
-```
+
 
 ---
 
