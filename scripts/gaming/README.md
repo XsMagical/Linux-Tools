@@ -1,164 +1,147 @@
 # 🎮 Team Nocturnal — Universal Gaming Setup (Linux)
-**by [XsMagical](https://github.com/XsMagical)**
+**By [XsMagical](https://github.com/XsMagical)**  
 
-A universal, native-first Linux gaming setup script with optional Flatpak fallbacks and overlays. Built for both newcomers and advanced users. Keep it clean, fast, and focused — no bloat.
+A universal, native-first Linux gaming setup script designed for newcomers from Windows or Mac.  
+Installs essential gaming tools with minimal hassle and includes smart defaults for overlays — without breaking system apps.  
 
 ---
 
-## ⚡ Quick Start
+## 📥 One-Time Install
 
-**Download & setup**
 ```bash
+# Create scripts folder & download the latest gaming setup script
 mkdir -p ~/scripts
-wget -O ~/scripts/universal_gaming_setup.sh https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/gaming/universal_gaming_setup.sh
-chmod +x ~/scripts/universal_gaming_setup.sh
+cd ~/scripts
+wget -O universal_gaming_setup.sh https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/gaming/universal_gaming_setup.sh
+chmod +x universal_gaming_setup.sh
+```
+
+```bash
+# Example usage (choose a bundle from the table below)
+./universal_gaming_setup.sh --bundle=full -y
 ```
 
 ---
 
-## 🧰 What it Installs
+## 📦 Install Bundles
 
-- **Core (all bundles):**
-  - Vulkan tools
-  - Wine + Winetricks
-  - Protontricks
-  - MangoHud + GameMode
-- **Launchers (normal/full):**
-  - Steam, Lutris, Heroic
-- **Proton Tools:**
-  - ProtonPlus (Fedora COPR)
-  - ProtonUp-Qt (Flatpak fallback)
-- **Comms:**
-  - Discord (native preferred)
-- **Extras (full only):**
-  - OBS Studio
-  - GOverlay
-  - Gamescope
-  - v4l2loopback kernel module
-
-**Smart defaults:** Native-first logic. Flatpaks used only as fallback or when forced. Cleans duplicate apps unless told not to.
+| Bundle | Description | Command |
+|--------|-------------|---------|
+| **Lite** | Core tools only | `./universal_gaming_setup.sh --bundle=lite -y` |
+| **Normal** | Core + Steam, Lutris, Heroic, Discord, Proton tools | `./universal_gaming_setup.sh --bundle=normal -y` |
+| **Full** | Everything in Normal **plus** OBS, GOverlay, Gamescope, v4l2loopback | `./universal_gaming_setup.sh --bundle=full -y` |
 
 ---
 
-## 🧩 Install Types
+## 📦 What It Installs
 
-### ✅ Lite
-```bash
-~/scripts/universal_gaming_setup.sh --bundle=lite -y
-```
-Installs only core tools (Wine, MangoHud, GameMode, Protontricks).
+- **Core tools:** MangoHud, GameMode, Vulkan tools, Wine, Winetricks, Protontricks  
+- **Launchers:** Steam, Lutris, Heroic Games Launcher  
+- **Proton Tools:** ProtonPlus (Fedora COPR), ProtonUp-Qt (Flatpak fallback)  
+- **Comms:** Discord  
+- **Extras (Full bundle):** OBS Studio, GOverlay, Gamescope, v4l2loopback  
 
----
-
-### ✅ Normal (default)
-```bash
-~/scripts/universal_gaming_setup.sh -y
-```
-Installs core tools, Steam, Lutris, Heroic, Discord, ProtonPlus.
+Uses native-first logic with Flatpak fallback when needed — keeps your system clean.  
 
 ---
 
-### ✅ Full
+## 🎯 Overlay Control (Per-Game via Steam)
+
+Overlays are now **strictly per-game** to avoid conflicts with non-gaming apps like OBS.  
+
+**Enable overlays for games (Steam only):**
 ```bash
-~/scripts/universal_gaming_setup.sh --bundle=full -y
+./universal_gaming_setup.sh --overlays=games --overlay-only
 ```
-Everything in **Normal**, plus OBS Studio, Gamescope, GOverlay, v4l2loopback.
+
+**Disable overlays entirely:**
+```bash
+./universal_gaming_setup.sh --overlays=none --overlay-only
+```
+
+**Check current overlay status:**
+```bash
+./universal_gaming_setup.sh --overlays=status --overlay-only
+```
 
 ---
 
-## 🎛️ Overlay Toggle (Steam-only, per-game)
-
-Enable:
-```bash
-~/scripts/universal_gaming_setup.sh --overlays=games --overlay-only
-```
-
-Disable:
-```bash
-~/scripts/universal_gaming_setup.sh --overlays=none --overlay-only
-```
-
-Check:
-```bash
-~/scripts/universal_gaming_setup.sh --overlays=status --overlay-only
-```
-
-> Adds or removes a Steam launcher wrapper (`steam_with_overlays.sh`)  
-> Prevents `MANGOHUD=1` leaks into non-gaming apps (like OBS, HandBrake)
-
----
-
-## 🛠️ Optional Flags
+## ⚙ Optional Flags
 
 ```text
--y, --yes                 Auto-accept prompts
--v, --verbose             Show all output
---native-only             Force native install only
---flatpak-only            Force Flatpak install only
---keep-flatpak            Don’t remove duplicate Flatpaks
---no-clean                Don’t clean after setup
+-y, --yes               Auto-confirm installations
+-v, --verbose           Verbose installation logs
+--native-only           Force native package installs
+--flatpak-only          Force flatpak installs
+--keep-flatpak          Keep flatpak versions even if native exists
+--no-clean              Skip cleanup of duplicates
 
-# Component toggles:
---no-steam                Skip Steam
---no-lutris               Skip Lutris
---no-heroic               Skip Heroic
---no-discord              Skip Discord
---no-protonplus           Skip ProtonPlus
---no-protonupqt           Skip ProtonUp-Qt
---no-protontricks         Skip Protontricks
+# Skip specific parts:
+--no-steam
+--no-lutris
+--no-heroic
+--no-discord
+--no-protonplus
+--no-protonupqt
+--no-protontricks
 ```
 
-**Examples**
+**Examples:**
 ```bash
 # Full bundle, native-only, verbose
-~/scripts/universal_gaming_setup.sh --bundle=full --native-only -v -y
+./universal_gaming_setup.sh --bundle=full --native-only --verbose -y
 
-# Flatpak-only, skip Discord
-~/scripts/universal_gaming_setup.sh --flatpak-only --no-discord -y
+# Flatpak-only setup, skip Discord
+./universal_gaming_setup.sh --flatpak-only --no-discord -y
 ```
 
 ---
 
-## 🐧 Supported Distros
+## 💻 Supported Distros
 
-- Fedora/RHEL (auto-configures RPM Fusion & COPR)
-- Debian/Ubuntu
-- Arch-based
+- Fedora / RHEL (Auto-config RPM Fusion & COPR)
+- Debian / Ubuntu
+- Arch-based distros
 - openSUSE (partial support)
-- ARM systems supported (Steam auto-skipped)
+- ARM devices supported (Steam is auto-skipped)
 
 ---
 
-## 🔁 Safe to Re-Run
+## 🔄 Safe to Re-Run
 
-- Automatically skips already-installed tools
-- MangoHud config only created if missing
-- Duplicates removed only if `--keep-flatpak` isn’t used
+- Skips already installed tools  
+- Creates MangoHud config only if missing  
+- Removes duplicate Flatpaks unless `--keep-flatpak` is used  
 
 ---
 
-## ❓ Troubleshooting
+## 🛠 Troubleshooting
 
-Overlay showing up in non-games?
+**Overlay appears in non-games?**
 ```bash
-~/scripts/universal_gaming_setup.sh --overlays=none --overlay-only
+./universal_gaming_setup.sh --overlays=none --overlay-only
 exec bash -l
 ```
 
-Steam “(TN Overlays)” entry not appearing?
+**Steam launcher not showing "(TN Overlays)"?**
 ```bash
-~/scripts/universal_gaming_setup.sh --overlays=games --overlay-only
+./universal_gaming_setup.sh --overlays=games --overlay-only
 ```
 
 ---
 
-## 🔗 Links
+## 🔄 Update Script
 
-- GitHub: [XsMagical/Linux-Tools](https://github.com/XsMagical/Linux-Tools)
-- Team Nocturnal: [team-nocturnal.com](https://team-nocturnal.com)
+```bash
+cd ~/scripts
+wget -O universal_gaming_setup.sh https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/gaming/universal_gaming_setup.sh
+chmod +x universal_gaming_setup.sh
+```
 
 ---
 
-## 📜 License
+## 🔗 Links & License
 
-MIT
+- [GitHub Repository](https://github.com/XsMagical/Linux-Tools)  
+- [Team Nocturnal](https://team-nocturnal.com)  
+- Licensed under **MIT**
