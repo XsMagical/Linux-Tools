@@ -6,6 +6,32 @@ Installs essential gaming tools with minimal hassle and includes smart defaults 
 
 ---
 
+## ⚠️ Heads-up: if `wget` isn’t installed
+
+Some fresh installs don’t include `wget`. If the commands below fail with “wget: command not found”, install it first:
+
+**Fedora / RHEL (dnf or dnf5)**
+```bash
+sudo dnf install -y wget    # or: sudo dnf5 install -y wget
+```
+
+**Ubuntu / Debian**
+```bash
+sudo apt-get update && sudo apt-get install -y wget
+```
+
+**Arch**
+```bash
+sudo pacman -Sy --needed wget
+```
+
+**openSUSE**
+```bash
+sudo zypper install -y wget
+```
+
+---
+
 ## 📥 One-Time Install
 
 ```bash
