@@ -123,6 +123,61 @@ sudo reboot
 
 ---
 
+## 🆕 Install the latest **without switching to a TTY**
+
+You can stay in your desktop session and still get the **latest available** for your distro **without using the NVIDIA `.run` installer**:
+
+### Fedora / RHEL (RPM Fusion)
+```bash
+sudo dnf upgrade --refresh
+sudo dnf install -y   xorg-x11-drv-nvidia xorg-x11-drv-nvidia-cuda   nvidia-settings nvidia-persistenced
+```
+
+### Ubuntu / Pop!_OS (vendor-signed) — latest from repo
+```bash
+sudo apt update
+sudo ubuntu-drivers autoinstall
+```
+
+### Ubuntu — latest from Graphics Drivers PPA
+```bash
+sudo add-apt-repository -y ppa:graphics-drivers/ppa
+sudo apt update
+sudo ubuntu-drivers autoinstall
+```
+
+### Debian — newer via backports
+```bash
+echo "deb http://deb.debian.org/debian bookworm-backports main contrib non-free non-free-firmware" | sudo tee /etc/apt/sources.list.d/backports.list
+sudo apt update
+sudo apt -t bookworm-backports install -y nvidia-driver
+```
+
+### Arch / Manjaro
+```bash
+sudo pacman -Syu --noconfirm
+sudo pacman -S --noconfirm nvidia-dkms nvidia-utils nvidia-settings
+```
+
+> These repo methods **do not require stopping the graphical session**. A **reboot** is still recommended to load the newly built/updated kernel module.
+
+---
+
+## (Optional) Upstream NVIDIA `.run` installer **without killing X**
+If you *must* use the official `.run` installer and want to avoid switching to TTY, you can try:
+```bash
+sudo sh NVIDIA-Linux-x86_64-<VERSION>.run --dkms --no-opengl-files
+```
+
+---
+
+## ⚠️ Important warnings
+- Installing the **latest NVIDIA driver from your distro repos** is generally safe and tested.  
+- Installing with the **NVIDIA `.run` file** can provide the **absolute newest driver**, but may cause breakage on some kernels or desktops, especially with Secure Boot enabled.  
+- Only advanced users who know rollback/recovery and module signing should go the `.run` route.
+
+---
+
 ## 🔍 Check Current Driver Version
 
 After installation, you can verify the installed NVIDIA driver version:
