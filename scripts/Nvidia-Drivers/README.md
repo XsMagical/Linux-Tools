@@ -176,6 +176,40 @@ sudo sh NVIDIA-Linux-x86_64-<VERSION>.run --dkms --no-opengl-files
 - Installing with the **NVIDIA `.run` file** can provide the **absolute newest driver**, but may cause breakage on some kernels or desktops, especially with Secure Boot enabled.  
 - Only advanced users who know rollback/recovery and module signing should go the `.run` route.
 
+
+## 🔄 Install NVIDIA 580.76.05 Without Switching to TTY
+
+If you want to install the **latest upstream NVIDIA driver** directly from NVIDIA's site without stopping your graphical session, you can use the `--no-opengl-files` flag to avoid replacing in-use OpenGL libraries.  
+⚠ **Note:** This method still requires a reboot and may fail if the kernel module is in active use. It is **not** recommended unless you specifically need this version and know how to recover from possible breakage.
+
+**Steps:**
+
+# 1) Download the official NVIDIA 580.76.05 driver
+```bash
+wget https://us.download.nvidia.com/XFree86/Linux-x86_64/580.76.05/NVIDIA-Linux-x86_64-580.76.05.run -O NVIDIA-Linux-x86_64-580.76.05.run
+```
+
+# 2) Make it executable
+```bash
+chmod +x NVIDIA-Linux-x86_64-580.76.05.run
+```
+
+# 3) Run installer with DKMS and without replacing active OpenGL files
+```bash
+sudo ./NVIDIA-Linux-x86_64-580.76.05.run --dkms --no-opengl-files
+```
+
+# 4) Reboot to load the new driver
+```bash
+sudo reboot
+```
+
+**Additional notes:**
+- Secure Boot users will need to sign the new kernel modules or disable Secure Boot.
+- This bypasses your package manager — future kernel updates may require manually re-running the installer.
+- If installation fails due to the driver module being in use, you may still need to stop the display manager or unload NVIDIA modules manually.
+
+
 ---
 
 ## 🔍 Check Current Driver Version
