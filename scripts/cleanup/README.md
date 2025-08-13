@@ -1,65 +1,23 @@
-# Universal Linux Cleanup Script
+# 🧹 Universal Linux Cleanup Script
 
-A simple **helper script** for Linux that works across **Fedora/RHEL**, **Debian/Ubuntu**, **Arch**, and **openSUSE**.
+A simple **helper script** for Linux that now works across **Fedora/RHEL**, **Debian/Ubuntu**, **Arch/Manjaro**, **openSUSE**, **Alpine**, and **rpm-ostree** systems.
 
-It offers ready-made presets for **Safe, Aggressive, Steam Cache, Docker, Combined Aggressive + Steam + Docker**.
+It offers ready-made presets for **Safe, Aggressive, Steam Cache, Docker, Kernel Pruning, Bootloader Refresh, and Combinations**.
 
-> ✅ Safe by design: doesn’t exit on the first error, logs everything to `~/scripts/logs/`, and keeps going if a repo/package is missing.
-
----
-
-## ⚠️ Heads-up: if `wget` isn’t installed
-
-Some fresh installs don’t include `wget`. If the commands below fail with “wget: command not found”, install it first:
-
-**Fedora / RHEL (dnf or dnf5)**
-```bash
-sudo dnf install -y wget    # or: sudo dnf5 install -y wget
-```
-
-**Ubuntu / Debian**
-```bash
-sudo apt-get update && sudo apt-get install -y wget
-```
-
-**Arch**
-```bash
-sudo pacman -Sy --needed wget
-```
-
-**openSUSE**
-```bash
-sudo zypper install -y wget
-```
+> ✅ Safe by design: doesn’t exit on the first error, logs everything to `~/cleanup_logs/`, and keeps going if a repo/package is missing.
 
 ---
 
 ## 🚀 Quick Start (wget-style copy & paste)
 
-> These commands save the script to `~/scripts/` so you can run it again later. Paste them exactly into your terminal.
+> These commands save the script to `~/scripts/` so you can run it again later.
 
-### One-time download
 ```bash
 mkdir -p ~/scripts
 cd ~/scripts
 wget -O universal_cleanup.sh https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh
 chmod +x universal_cleanup.sh
 ```
-
-### Run a preset (choose one)
-```bash
-~/scripts/universal_cleanup.sh -y (plus optional flags)
-```
-
----
-
-## Presets
-
-- **Safe** — Performs safe default cleanup without removing critical files.
-- **Aggressive** — Deeper cache purge including APT/DNF/Pacman caches, npm, yarn, cargo, etc.
-- **Steam Cache** — Clears Steam shader and GPU shader caches without touching games/configs.
-- **Docker** — Removes all unused images, containers, networks, and dangling volumes.
-- **Combined** — Aggressive + Steam Cache + Docker in one run.
 
 ---
 
@@ -70,23 +28,27 @@ chmod +x universal_cleanup.sh
 ```
 
 ```text
---yes              Non-interactive (auto-confirm where possible)
---dry-run          Show what would run; make no changes
+--yes                  Non-interactive (auto-confirm where possible)
+--dry-run              Show what would run; make no changes
 
---aggressive       Deeper cache purge:
-                   • DNF: 'dnf clean all'
-                   • Pacman: paccache keep=1 (or 'pacman -Scc' fallback)
-                   • npm: 'npm cache clean --force'
---journal-days=N   Vacuum systemd journals to N days (default: 14)
+--aggressive           Deeper cache purge:
+                       • DNF: 'dnf clean all'
+                       • Pacman: paccache keep=1 (or 'pacman -Scc' fallback)
+                       • Zypper: 'zypper clean -a'
+                       • npm: 'npm cache clean --force'
 
---steam-cache      Clear Steam shader caches and GPU shader caches (safe)
---docker           Run 'docker system prune' to remove ALL unused:
-                   images, containers, networks, and dangling volumes
+--journal-days=N       Vacuum systemd journals to N days (default: 14)
+--prune-kernels        Safely remove old kernels (per-distro rules)
+--refresh-bootloader   Refresh GRUB/systemd-boot configs after changes
 
---no-flatpak       Skip Flatpak cleanup
---no-snap          Skip Snap cleanup
+--steam-cache          Clear Steam shader & GPU shader caches (safe)
+--docker               Run 'docker system prune' to remove ALL unused:
+                       images, containers, networks, and dangling volumes
 
--h, --help         Show help
+--no-flatpak           Skip Flatpak cleanup
+--no-snap              Skip Snap cleanup
+
+-h, --help             Show help
 ```
 
 ---
@@ -96,11 +58,14 @@ chmod +x universal_cleanup.sh
 - **System packages**
   - **APT:** `autoremove --purge`, then `autoclean` (or `clean` with `--aggressive`).
   - **DNF:** `dnf autoremove`, then `dnf clean packages` (or `clean all` with `--aggressive`).
-  - **Pacman:** remove orphans (`pacman -Rns …`), then trim caches with `paccache` (keep 3 by default, keep 1 with `--aggressive`). Falls back to `pacman -Sc/-Scc` if `paccache` is missing.
+  - **Pacman:** remove orphans, trim caches (keep 3 or keep 1 with `--aggressive`).
+  - **Zypper:** remove orphans, clean caches (`-a` with `--aggressive`).
+  - **APK:** clear `/var/cache/apk`.
+  - **rpm-ostree:** clean metadata and old deployments.
 
 - **Runtimes & storefronts**
-  - **Flatpak:** `flatpak uninstall --unused` + appstream refresh (optional `flatpak repair` with `--aggressive`).
-  - **Snap:** clean disabled/obsolete revisions (skippable with `--no-snap`).
+  - **Flatpak:** uninstall unused runtimes, refresh appstream, warn on EOL runtimes.
+  - **Snap:** remove disabled revisions.
 
 - **System logs**
   - **journald:** vacuum to N days (default **14**).
@@ -109,137 +74,69 @@ chmod +x universal_cleanup.sh
 - **User caches**
   - Thumbnail cache, Trash (`~/.local/share/Trash`).
 
-- **Dev/tool caches (auto-detected)**
-  - `pip`/`pip3` cache purge, `npm cache verify` (or `npm cache clean --force` with `--aggressive`), `yarn cache clean`, `cargo-cache -a` (if installed).
+- **Dev/tool caches**
+  - `pip`/`pip3`, `npm`, `yarn`, `cargo-cache`.
 
 - **Optional**
-  - **Steam:** clear shader caches (safe) plus GPU shader caches with `--steam-cache`.
-  - **Docker:** `docker system prune` (prompts unless `--yes`) with `--docker`.
+  - **Steam:** clear shader caches (safe).
+  - **Docker:** prune unused images, containers, networks, volumes.
+  - **Kernel pruning:** safely remove old kernels without touching the running one.
+  - **Bootloader refresh:** updates GRUB/systemd-boot configs.
 
 ---
 
-## Logging & re-running
+## 📦 Presets
 
-- Logs are written to: `~/scripts/logs/universal_cleanup_YYYYMMDD_HHMMSS.log`
-- It’s safe to **re-run** any preset; already-installed items are skipped.
-
+**1) Safe default cleanup**
 ```bash
-# View your most recent logs
-ls -lt ~/scripts/logs | head -n 5
+~/scripts/universal_cleanup.sh --yes
+```
+
+**2) Aggressive cleanup with shorter journals**
+```bash
+~/scripts/universal_cleanup.sh --yes --aggressive --journal-days=7
+```
+
+**3) Steam cache cleanup only**
+```bash
+~/scripts/universal_cleanup.sh --yes --steam-cache
+```
+
+**4) Docker cleanup only**
+```bash
+~/scripts/universal_cleanup.sh --yes --docker
+```
+
+**5) Aggressive + Steam + Docker + Kernel prune**
+```bash
+~/scripts/universal_cleanup.sh --yes --aggressive --steam-cache --docker --prune-kernels
+```
+
+**6) Dry run (no changes, just show actions)**
+```bash
+~/scripts/universal_cleanup.sh --dry-run
+```
+
+**7) Aggressive cleanup + bootloader refresh**
+```bash
+~/scripts/universal_cleanup.sh --yes --aggressive --refresh-bootloader
+```
+
+**8) Skip Snap & Flatpak cleanup**
+```bash
+~/scripts/universal_cleanup.sh --yes --no-snap --no-flatpak
 ```
 
 ---
 
-## 💾 Running Locally (After Download)
+## 📝 Logging
 
-*First, download and make the script executable:*
-
-~~~bash
-mkdir -p ~/scripts
-cd ~/scripts
-wget https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh
-chmod +x ~/scripts/universal_cleanup.sh
-~~~
-
-*Then you can run it from your saved copy:*
-
-**1) Safe default cleanup**
-
-~~~bash
-~/scripts/universal_cleanup.sh --yes
-~~~
-
-**2) Aggressive cleanup**
-
-~~~bash
-~/scripts/universal_cleanup.sh --yes --aggressive --journal-days=7
-~~~
-
-**3) Steam cache cleanup**
-
-~~~bash
-~/scripts/universal_cleanup.sh --yes --steam-cache
-~~~
-
-**4) Docker cleanup**
-
-~~~bash
-~/scripts/universal_cleanup.sh --yes --docker
-~~~
-
-**5) Aggressive + Steam + Docker**
-
-~~~bash
-~/scripts/universal_cleanup.sh --yes --aggressive --journal-days=7 --steam-cache --docker
-~~~
-
----
-
-## ▶️ One-Line Usage (Run Directly from GitHub)
-
-**1) Safe default cleanup (recommended for first run)**
-
-~~~bash
-bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh) --yes
-~~~
-
-**2) Aggressive cleanup (deeper cache removal)**
-
-~~~bash
-bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh) --yes --aggressive --journal-days=7
-~~~
-
-**3) Add Steam cache cleanup (safe: games/configs untouched)**
-
-~~~bash
-bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh) --yes --steam-cache
-~~~
-
-**4) Docker cleanup (removes ALL unused images, containers, volumes)**
-
-~~~bash
-bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh) --yes --docker
-~~~
-
-**5) Combine aggressive + Steam + Docker**
-
-~~~bash
-bash <(curl -fsSL https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/cleanup/universal_cleanup.sh) --yes --aggressive --journal-days=7 --steam-cache --docker
-~~~
-
----
-
-
-## Supported distros (auto-detected)
-
-- **Fedora** / RHEL family (DNF / DNF5)
-- **Ubuntu / Debian** (APT)
-- **Arch** (pacman, optional `paccache`)
-- **openSUSE** (zypper)
-
-> **Pacman tip:** If `paccache` is missing, install `pacman-contrib`:
->
-> ```bash
-> sudo pacman -Syu --needed pacman-contrib
-> ```
-
----
-
-## Notes for new users
-
-- You’ll likely be asked for your **password** — that’s `sudo` asking to install packages.
-- Seeing **“already installed”** or **“skipped”** messages is normal.
-- If a repo or package is missing on your distro, the script **continues** and logs it.
+- Logs are saved to: `~/cleanup_logs/clean-YYYYMMDD-HHMM.log`
+- Safe to **re-run** — skips already-cleaned or non-existent items.
 
 ---
 
 **Made by XsMagical — Team Nocturnal**  
-If something doesn’t work on your distro, open an issue with your distro/version and the latest log from `~/scripts/logs/`.
-
----
-
-## License
-
 MIT License
 
 Copyright (c) 2025 XsMagical — Team Nocturnal
