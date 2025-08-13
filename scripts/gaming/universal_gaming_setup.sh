@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Team Nocturnal — Universal Gaming Setup Script by XsMagical
+
 # ===== Colors =====
 RED="\033[31m"; BLUE="\033[34m"; RESET="\033[0m"; BOLD="\033[1m"; DIM="\033[2m"
 
@@ -10,467 +12,397 @@ print_banner() {
   printf '%b\n' "${RED}   ██║   ██║ ╚████║${RESET}"
   printf '%b\n' "${RED}   ╚═╝   ╚═╝  ╚═══╝${RESET}"
   printf '%b\n' "${BLUE}----------------------------------------------------------${RESET}"
-  printf '%b\n' "${BLUE}   Team-Nocturnal.com Universal Gaming Setup Script by XsMagical${RESET}"
+  printf '%b\n' "${BLUE}   Team-Nocturnal.com \"Universal Gaming Setup\" by XsMagical${RESET}"
   printf '%b\n\n' "${BLUE}----------------------------------------------------------${RESET}"
 }
 
-set -euo pipefail
+# -----------------------------------------------------------------------------
+# Purpose:
+#   Cross‑distro gaming setup with native-first installs and safe defaults.
+#   • Removes system‑wide overlay exports (we use GOverlay instead).
+#   • Installs Steam (native if supported), Lutris, Heroic, GameMode, MangoHud, Wine, Vulkan tools.
+#   • Installs GOverlay (GUI to toggle MangoHud/vkBasalt per game).
+#   • Creates a Steam “safe UI” launcher to avoid CEF 0x3035 issues on Wayland/SELinux.
+#   • Optionally cleans Flatpak duplicates if a native app is installed.
+#
+# Distros:
+#   Fedora/RHEL (dnf), Ubuntu/Debian (apt), Arch/Manjaro (pacman).
+#
+# Flags:
+#   --discord=auto|native|flatpak     (default: auto)
+#   --no-cleanup-flatpak-dupes        (default is to clean duplicates if native exists)
+#   --mangohud-defaults               (write a sensible ~/.config/MangoHud/MangoHud.conf)
+#   --protonplus                      (Fedora COPR native ProtonPlus if available; otherwise ignored)
+#   --protonupqt                      (Install ProtonUp‑Qt via Flatpak)
+#   --skip-steam                      (don’t install Steam; still writes safe launcher if Steam present)
+#   -y | --yes                        (assume yes for package installs)
+#   -v | --verbose                    (more logging)
+#
+# Notes:
+#   • We DO NOT set MangoHud/vkBasalt system‑wide. Use GOverlay or per‑game Steam launch options.
+#   • ARM (aarch64): skip native Steam automatically.
+# -----------------------------------------------------------------------------
+
 print_banner
+set -u
 
-# ===== Flags / defaults =====
-ASSUME_YES=0
+# -------- Globals & helpers --------
+LOG_DIR="${HOME}/scripts/logs"
+mkdir -p "${LOG_DIR}"
+LOG_FILE="${LOG_DIR}/gaming_$(date +%Y%m%d_%H%M%S).log"
+exec > >(tee -a "${LOG_FILE}") 2>&1
+
+YES_FLAG=0
 VERBOSE=0
-NATIVE_ONLY=0
-FLATPAK_ONLY=0
+DISCORD_MODE="auto"
+CLEANUP_DUPES=1
+WRITE_MANGOHUD_DEFAULTS=0
+WANT_PROTONPLUS=0
+WANT_PROTONUPQT=0
+SKIP_STEAM=0
 
-INSTALL_DISCORD=1
-INSTALL_HEROIC=1
-INSTALL_STEAM=1
-INSTALL_LUTRIS=1
-INSTALL_PROTONPLUS=1      # Fedora native (COPR) preferred
-INSTALL_PROTONUPQT=1      # Flatpak fallback
+have() { command -v "$1" >/dev/null 2>&1; }
+log() { printf '%b\n' "${BOLD}==>${RESET} $*"; }
+info(){ printf '%b\n' "${DIM} ->${RESET} $*"; }
+warn(){ printf '%b\n' "${RED}[!]${RESET} $*"; }
 
-INSTALL_OBS=0             # Off by default; enabled in --bundle=full
-INSTALL_GAMESCOPE=0       # Off by default; enabled in --bundle=full
-INSTALL_GOVERLAY=0        # Off by default; enabled in --bundle=full
-INSTALL_V4L2LOOPBACK=0    # Off by default; enabled in --bundle=full
-INSTALL_PROTONTRICKS=1    # Tools for Proton
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --discord=*) DISCORD_MODE="${1#*=}";;
+    --no-cleanup-flatpak-dupes) CLEANUP_DUPES=0;;
+    --mangohud-defaults) WRITE_MANGOHUD_DEFAULTS=1;;
+    --protonplus) WANT_PROTONPLUS=1;;
+    --protonupqt) WANT_PROTONUPQT=1;;
+    --skip-steam) SKIP_STEAM=1;;
+    -y|--yes) YES_FLAG=1;;
+    -v|--verbose) VERBOSE=1;;
+    -h|--help)
+      cat <<EOF
+Usage: $0 [options]
+  --discord=auto|native|flatpak   (default: auto)
+  --no-cleanup-flatpak-dupes      (don’t remove Flatpak duplicates when native exists)
+  --mangohud-defaults             (write MangoHud default config)
+  --protonplus                    (Fedora: try COPR protonplus)
+  --protonupqt                    (install ProtonUp-Qt via Flatpak)
+  --skip-steam                    (don’t install Steam)
+  -y | --yes                      (assume yes)
+  -v | --verbose                  (verbose logs)
+EOF
+      exit 0;;
+    *) warn "Unknown flag: $1";;
+  esac
+  shift
+done
 
-KEEP_FLATPAK=0
-CLEAN_DUPES=1
-BUNDLE=""                 # lite|normal|full
+SUDO="sudo"
+[ $YES_FLAG -eq 1 ] && DNF_Y="-y" || DNF_Y=""
+[ $YES_FLAG -eq 1 ] && APT_Y="-y" || APT_Y=""
+[ $YES_FLAG -eq 1 ] && PAC_Y="--noconfirm" || PAC_Y=""
 
-# Overlays are **games only** (Steam wrapper). No system-wide support.
-OVERLAYS_MODE=""          # games|none|status
-OVERLAY_ONLY=0
+ARCH="$(uname -m)"
+IS_ARM=0
+[ "${ARCH}" = "aarch64" ] && IS_ARM=1
 
-usage() {
-cat <<USAGE
-Usage: $(basename "$0") [options]
+# Detect PM
+PM=""
+if have dnf; then PM="dnf"
+elif have apt; then PM="apt"
+elif have pacman; then PM="pacman"
+else warn "Unsupported distro (no dnf/apt/pacman)."; exit 1
+fi
 
-General:
-  -y, --yes             Assume yes for package prompts
-  -v, --verbose         Verbose package output
-  --native-only         Only native packages
-  --flatpak-only        Only Flatpaks
-  --keep-flatpak        Keep Flatpak duplicates even if native exists
-  --no-clean            Do not remove Flatpak duplicates
+# Pre-auth sudo
+$SUDO -v 2>/dev/null || true
 
-Per-app toggles:
-  --no-steam | --no-lutris | --no-heroic | --no-discord
-  --no-protonplus | --no-protonupqt | --no-protontricks
-
-Bundles:
-  --bundle=lite|normal|full
-    • full adds: obs-studio, gamescope, GOverlay, v4l2loopback
-
-Overlays (games only):
-  --overlays=games|none|status
-  --overlay-only        Apply/show overlay and exit (no installs)
-
-Examples:
-  $HOME/scripts/universal_gaming_setup.sh --overlays=games  --overlay-only
-  $HOME/scripts/universal_gaming_setup.sh --overlays=none   --overlay-only
-  $HOME/scripts/universal_gaming_setup.sh --bundle=full -y
-USAGE
+# -------- Flatpak helpers --------
+ensure_flatpak() {
+  if have flatpak; then return 0; fi
+  log "Installing Flatpak runtime…"
+  case "$PM" in
+    dnf) $SUDO dnf install $DNF_Y -y flatpak || true ;;
+    apt) $SUDO apt update || true; $SUDO apt install $APT_Y flatpak || true ;;
+    pacman) $SUDO pacman -S $PAC_Y flatpak || true ;;
+  esac
 }
 
-# ===== Parse args =====
-for arg in "$@"; do
-  case "$arg" in
-    -y|--yes) ASSUME_YES=1 ;;
-    -v|--verbose) VERBOSE=1 ;;
-    --native-only) NATIVE_ONLY=1 ;;
-    --flatpak-only) FLATPAK_ONLY=1 ;;
-    --keep-flatpak) KEEP_FLATPAK=1 ;;
-    --no-clean) CLEAN_DUPES=0 ;;
-    --no-steAM|--no-steam) INSTALL_STEAM=0 ;;
-    --no-lutris) INSTALL_LUTRIS=0 ;;
-    --no-heroic) INSTALL_HEROIC=0 ;;
-    --no-discord) INSTALL_DISCORD=0 ;;
-    --no-protonplus) INSTALL_PROTONPLUS=0 ;;
-    --no-protonupqt) INSTALL_PROTONUPQT=0 ;;
-    --no-protontricks) INSTALL_PROTONTRICKS=0 ;;
-    --bundle=lite) BUNDLE="lite" ;;
-    --bundle=normal) BUNDLE="normal" ;;
-    --bundle=full) BUNDLE="full" ;;
-    --overlays=games) OVERLAYS_MODE="games" ;;
-    --overlays=none) OVERLAYS_MODE="none" ;;
-    --overlays=status) OVERLAYS_MODE="status" ;;
-    --overlay-only) OVERLAY_ONLY=1 ;;
-    -h|--help) usage; exit 0 ;;
-    *) echo "Unknown flag: $arg"; exit 2 ;;
-  esac
-done
-[[ $NATIVE_ONLY -eq 1 && $FLATPAK_ONLY -eq 1 ]] && { echo "Cannot use --native-only and --flatpak-only together."; exit 2; }
+ensure_flathub() {
+  ensure_flatpak
+  if flatpak remote-list | awk '{print $1}' | grep -q '^flathub$'; then
+    return 0
+  fi
+  log "Adding Flathub…"
+  flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo || true
+}
 
-# ===== Bundle presets =====
-case "$BUNDLE" in
-  lite)
-    INSTALL_HEROIC=0
-    INSTALL_LUTRIS=0
-    INSTALL_DISCORD=0
-    INSTALL_OBS=0
-    INSTALL_GAMESCOPE=0
-    INSTALL_GOVERLAY=0
-    INSTALL_V4L2LOOPBACK=0
+fp_install() {
+  local app="$1"
+  ensure_flathub
+  info "Flatpak install: ${app}"
+  flatpak install -y --noninteractive flathub "${app}" || true
+}
+
+fp_remove_if_present() {
+  local app="$1"
+  if have flatpak && flatpak info "${app}" >/dev/null 2>&1; then
+    info "Removing Flatpak duplicate: ${app}"
+    flatpak uninstall -y "${app}" || true
+  fi
+}
+
+# -------- Package installs --------
+install_native() {
+  case "$PM" in
+    dnf) $SUDO dnf install $DNF_Y -y "$@" || true ;;
+    apt) $SUDO apt update || true; $SUDO apt install $APT_Y "$@" || true ;;
+    pacman) $SUDO pacman -Sy $PAC_Y "$@" || true ;;
+  esac
+}
+
+remove_native() {
+  case "$PM" in
+    dnf) $SUDO dnf remove -y "$@" || true ;;
+    apt) $SUDO apt purge -y "$@" || true ;;
+    pacman) $SUDO pacman -Rs $PAC_Y "$@" || true ;;
+  esac
+}
+
+# -------- Enable repos / basics --------
+case "$PM" in
+  dnf)
+    log "Ensuring RPM Fusion (free & nonfree)…"
+    if ! rpm -qa | grep -q rpmfusion-free-release; then
+      $SUDO dnf install $DNF_Y -y \
+        https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm || true
+    fi
+    if ! rpm -qa | grep -q rpmfusion-nonfree-release; then
+      $SUDO dnf install $DNF_Y -y \
+        https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm || true
+    fi
     ;;
-  normal|"")
-    # Defaults stand
+  apt)
+    log "Updating APT metadata…"
+    $SUDO apt update || true
     ;;
-  full)
-    INSTALL_OBS=1
-    INSTALL_GAMESCOPE=1
-    INSTALL_GOVERLAY=1
-    INSTALL_V4L2LOOPBACK=1
+  pacman)
+    log "Refreshing pacman databases…"
+    $SUDO pacman -Sy || true
     ;;
 esac
 
-# ===== Distro detect =====
-if [[ -r /etc/os-release ]]; then . /etc/os-release; else ID="unknown"; ID_LIKE=""; fi
-ARCH="$(uname -m)"
-case "$ARCH" in aarch64|armv7*|armhf|arm64) INSTALL_STEAM=0 ;; esac
+# -------- Core gaming stack (native-first) --------
+log "Installing core tools (GameMode, MangoHud, Wine, Vulkan)…"
+case "$PM" in
+  dnf)
+    install_native gamemode mangohud mangohud.i686 \
+                   wine wine-mono wine-gecko \
+                   vulkan-loader vulkan-loader.i686 \
+                   mesa-dri-drivers mesa-dri-drivers.i686 \
+                   mesa-vulkan-drivers mesa-vulkan-drivers.i686 \
+                   lutris
+    ;;
+  apt)
+    install_native gamemode mangohud \
+                   wine wine64 winetricks \
+                   vulkan-tools mesa-vulkan-drivers \
+                   lutris
+    ;;
+  pacman)
+    install_native gamemode mangohud wine winetricks vulkan-tools vulkan-icd-loader lutris
+    ;;
+esac
 
-# ===== Package helpers =====
-# Refactor DNF handling to support dnf5 (flags must follow subcommand)
-if command -v dnf5 >/dev/null 2>&1; then
-  DNF_CMD="dnf5"
+# Heroic (Flatpak is simplest/universal)
+log "Installing Heroic (Flatpak)…"
+fp_install com.heroicgameslauncher.hgl
+
+# GOverlay (Flatpak universal)
+log "Installing GOverlay (Flatpak)…"
+fp_install com.github.gicmo.goverlay
+
+# Proton managers
+if [ $WANT_PROTONUPQT -eq 1 ]; then
+  log "Installing ProtonUp‑Qt (Flatpak)…"
+  fp_install net.davidotek.pupgui2
+fi
+if [ $WANT_PROTONPLUS -eq 1 ] && [ "$PM" = "dnf" ]; then
+  if have dnf; then
+    log "Attempting native ProtonPlus (Fedora COPR)…"
+    $SUDO dnf -y copr enable wehagy/protonplus || true
+    install_native protonplus
+  fi
+fi
+
+# Discord
+install_discord_native=0
+case "$DISCORD_MODE" in
+  native) install_discord_native=1 ;;
+  flatpak) install_discord_native=0 ;;
+  auto)
+    if [ "$PM" = "dnf" ]; then install_discord_native=1; else install_discord_native=0; fi
+    ;;
+esac
+
+if [ $install_discord_native -eq 1 ]; then
+  log "Installing Discord (native‑first)…"
+  case "$PM" in
+    dnf) install_native discord ;;
+    apt) warn "No reliable ‘discord’ in Ubuntu/Debian repos — using Flatpak instead."; fp_install com.discordapp.Discord ;;
+    pacman) install_native discord || fp_install com.discordapp.Discord ;;
+  esac
+  if [ $CLEANUP_DUPES -eq 1 ]; then fp_remove_if_present com.discordapp.Discord; fi
 else
-  DNF_CMD="dnf"
+  log "Installing Discord (Flatpak)…"
+  fp_install com.discordapp.Discord
+  if [ $CLEANUP_DUPES -eq 1 ]; then remove_native discord; fi
 fi
-DNF_INSTALL_FLAGS="install -y --setopt=install_weak_deps=False --best --refresh --allowerasing"
-[[ $VERBOSE -eq 1 ]] && DNF_INSTALL_FLAGS="$DNF_INSTALL_FLAGS -v"
 
-APT_INSTALL_FLAGS="-y -o Dpkg::Options::=--force-confnew"
-[[ $VERBOSE -eq 1 ]] && APT_INSTALL_FLAGS="$APT_INSTALL_FLAGS -V"
-PACMAN_FLAGS="--needed --noconfirm"
-[[ $VERBOSE -eq 1 ]] && PACMAN_FLAGS="$PACMAN_FLAGS -v"
-
-have_flatpak() { command -v flatpak >/dev/null 2>&1; }
-flatpak_user() { flatpak --user "$@"; }
-fp_add_flathub() { flatpak_user remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo || true; }
-fp_present() { flatpak_user list --app --columns=application | grep -qx "$1"; }
-fp_install() { flatpak_user install -y --noninteractive "$@"; }
-fp_remove() { flatpak_user uninstall -y --delete-data "$@" || true; }
-
-ensure_rpmfusion() {
-  if ! rpm -q rpmfusion-free-release >/dev/null 2>&1; then
-    sudo "$DNF_CMD" $DNF_INSTALL_FLAGS \
-      "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm" \
-      "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm"
-  fi
-}
-
-ensure_debian_components() {
-  case "${ID_LIKE:-$ID}" in
-    *debian*)
-      sudo dpkg --add-architecture i386 2>/dev/null || true
-      sudo sed -i 's/^\s*deb \(.*\)$/\0 contrib non-free non-free-firmware/' /etc/apt/sources.list || true
-      sudo apt update || true
-      ;;
-  esac
-}
-
-install_native() {
-  case "${ID_LIKE:-$ID}" in
-    *fedora*|*rhel*)   sudo "$DNF_CMD" $DNF_INSTALL_FLAGS "$@" ;;
-    *debian*|*ubuntu*) sudo apt-get ${APT_INSTALL_FLAGS} install "$@" ;;
-    *arch*|*manjaro*)  sudo pacman -S ${PACMAN_FLAGS} "$@" ;;
-    *suse*|*opensuse*) sudo zypper --non-interactive in "$@" ;;
-    *) echo "Unsupported distro family: ${ID_LIKE:-$ID}"; return 1 ;;
-  esac
-}
-
-# ===== Install sets =====
-install_core() {
-  # MangoHud/GameMode/Vulkan/Wine/Winetricks/Protontricks
-  case "${ID_LIKE:-$ID}" in
-    *fedora*|*rhel*)
-      ensure_rpmfusion
-      install_native mangohud gamemode vkBasalt vulkan-tools vulkan-validation-layers wine winetricks
-      [[ $INSTALL_PROTONTRICKS -eq 1 ]] && install_native protontricks || true
-      ;;
-    *debian*|*ubuntu*)
-      ensure_debian_components
-      install_native mangohud gamemode mesa-vulkan-drivers vulkan-tools wine winetricks
-      [[ $INSTALL_PROTONTRICKS -eq 1 ]] && install_native protontricks || true
-      ;;
-    *arch*|*manjaro*)
-      install_native mangohud gamemode vulkan-tools wine winetricks protontricks
-      ;;
-    *suse*)
-      install_native mangohud gamemode vulkan-tools wine winetricks || true
-      ;;
-  esac
-}
-
-install_steam() {
-  if [[ $FLATPAK_ONLY -eq 1 ]]; then
-    have_flatpak || install_native flatpak; fp_add_flathub
-    fp_install flathub com.valvesoftware.Steam; return
-  fi
-  case "${ID_LIKE:-$ID}" in
-    *fedora*|*rhel*) ensure_rpmfusion; install_native steam ;;
-    *debian*|*ubuntu*) ensure_debian_components; install_native steam ;;
-    *arch*|*manjaro*) install_native steam ;;
-    *suse*) install_native steam ;;
-  esac
-}
-
-install_lutris() {
-  case "${ID_LIKE:-$ID}" in
-    *fedora*|*rhel*) ensure_rpmfusion; install_native lutris ;;
-    *debian*|*ubuntu*)
-      if apt-cache policy lutris | grep -q Candidate; then install_native lutris
-      else have_flatpak || install_native flatpak; fp_add_flathub; fp_install flathub net.lutris.Lutris; fi
-      ;;
-    *arch*|*manjaro*) install_native lutris ;;
-    *suse*)
-      if zypper se -x lutris | grep -q '^i\? | lutris'; then install_native lutris
-      else have_flatpak || install_native flatpak; fp_add_flathub; fp_install flathub net.lutris.Lutris; fi
-      ;;
-  esac
-}
-
-install_heroic() {
-  have_flatpak || install_native flatpak; fp_add_flathub
-  fp_install flathub com.heroicgameslauncher.hgl
-}
-
-install_discord() {
-  # Native where reasonable; Flatpak fallback
-  case "${ID_LIKE:-$ID}" in
-    *fedora*|*rhel*) ensure_rpmfusion; install_native discord || true ;;
-    *) : ;;
-  esac
-  if ! command -v discord >/dev/null 2>&1; then
-    have_flatpak || install_native flatpak; fp_add_flathub
-    fp_install flathub com.discordapp.Discord || true
-  fi
-}
-
-install_obs_and_extras() {
-  [[ $INSTALL_OBS -eq 1 ]] && {
-    case "${ID_LIKE:-$ID}" in
-      *fedora*|*rhel*) install_native obs-studio ;;
-      *debian*|*ubuntu*) install_native obs-studio || { have_flatpak || install_native flatpak; fp_add_flathub; fp_install flathub com.obsproject.Studio; } ;;
-      *arch*|*manjaro*) install_native obs-studio ;;
-      *suse*) install_native obs-studio || true ;;
-    esac
-  }
-  [[ $INSTALL_GAMESCOPE -eq 1 ]] && {
-    case "${ID_LIKE:-$ID}" in
-      *fedora*|*rhel*) install_native gamescope ;;
-      *debian*|*ubuntu*) install_native gamescope || true ;;
-      *arch*|*manjaro*) install_native gamescope ;;
-      *suse*) install_native gamescope || true ;;
-    esac
-  }
-  [[ $INSTALL_GOVERLAY -eq 1 ]] && {
-    case "${ID_LIKE:-$ID}" in
-      *fedora*|*rhel*) install_native goverlay || { have_flatpak || install_native flatpak; fp_add_flathub; fp_install flathub net.lutris.GOverlay; } ;;
-      *debian*|*ubuntu*|*arch*|*suse*) have_flatpak || install_native flatpak; fp_add_flathub; fp_install flathub net.lutris.GOverlay ;;
-    esac
-  }
-  [[ $INSTALL_V4L2LOOPBACK -eq 1 ]] && {
-    case "${ID_LIKE:-$ID}" in
-      *fedora*|*rhel*) install_native v4l2loopback v4l2loopback-utils || true ;;
-      *debian*|*ubuntu*) install_native v4l2loopback-dkms v4l2loopback-utils || true ;;
-      *arch*|*manjaro*) install_native v4l2loopback-dkms v4l2loopback-utils || true ;;
-      *suse*) install_native v4l2loopback-kmp-default v4l2loopback-utils || true ;;
-    esac
-  }
-}
-
-install_proton_helpers() {
-  case "${ID_LIKE:-$ID}" in
-    *fedora*|*rhel*)
-      if [[ $INSTALL_PROTONPLUS -eq 1 && ! $(command -v protonplus) ]]; then
-        sudo "$DNF_CMD" -y copr enable wehagy/protonplus || true
-        sudo "$DNF_CMD" $DNF_INSTALL_FLAGS protonplus || true
-      fi
-      ;;
-  esac
-  if [[ $INSTALL_PROTONUPQT -eq 1 ]] && ! command -v protonplus >/dev/null 2>&1; then
-    have_flatpak || install_native flatpak; fp_add_flathub
-    fp_install flathub net.davidotek.pupgui2 || true
-  fi
-}
-
-dedupe_apps() {
-  [[ $CLEAN_DUPES -eq 1 ]] || return 0
-  if command -v steam >/dev/null 2>&1 && fp_present com.valvesoftware.Steam; then fp_remove com.valvesoftware.Steam; fi
-  if command -v lutris >/dev/null 2>&1 && fp_present net.lutris.Lutris; then fp_remove net.lutris.Lutris; fi
-  if command -v discord >/dev/null 2>&1 && fp_present com.discordapp.Discord; then fp_remove com.discordapp.Discord; fi
-  if command -v obs >/dev/null 2>&1 && fp_present com.obsproject.Studio; then fp_remove com.obsproject.Studio; fi
-}
-
-ensure_mangohud_config() {
-  mkdir -p "$HOME/.config/MangoHud"
-  local cfg="$HOME/.config/MangoHud/MangoHud.conf"
-  if [[ ! -s "$cfg" ]]; then
-    cat > "$cfg" <<'EOF'
-version=1
-position=top-left
-background_alpha=0.4
-gpu_stats
-gpu_core_clock
-gpu_mem_clock
-gpu_power
-gpu_temp
-cpu_stats
-cpu_temp
-ram
-vram
-frametime
-frame_timing=1
-engine_version
-vulkan_driver
-arch
-EOF
-  fi
-}
-
-# ===== Overlays (games only: Steam wrapper) =====
-ov_log() { printf '[Overlays] %s\n' "$*"; }
-
-ov_games_enable() {
-  ov_log "Enabling per‑game overlays via Steam wrapper…"
-  local scripts_dir="$HOME/scripts"
-  local wrapper="$scripts_dir/steam_with_overlays.sh"
-  local local_desktop="$HOME/.local/share/applications"
-  mkdir -p "$scripts_dir" "$local_desktop"
-
-  cat > "$wrapper" <<'WRAP'
-#!/usr/bin/env bash
-set -euo pipefail
-GM=""
-if command -v gamemoderun >/dev/null 2>&1; then GM="gamemoderun"; fi
-VK_ENV=""
-if command -v vkbasalt >/dev/null 2>&1 || [ -d /usr/share/vulkan/implicit_layer.d ] || [ -d /etc/vulkan/implicit_layer.d ]; then
-  VK_ENV="ENABLE_VKBASALT=1"
-fi
-exec env MANGOHUD=1 ${VK_ENV} ${GM} steam "$@"
-WRAP
-  chmod +x "$wrapper"
-
-  if [[ -f /usr/share/applications/steam.desktop ]]; then
-    cp /usr/share/applications/steam.desktop "$local_desktop/steam.desktop"
+# Steam
+if [ $SKIP_STEAM -eq 1 ]; then
+  log "Skipping Steam install as requested."
+else
+  if [ $IS_ARM -eq 1 ]; then
+    warn "ARM64 detected — skipping native Steam."
+    # Flatpak Steam works on ARM (for Remote Play, etc.)
+    log "Installing Steam (Flatpak, ARM)…"
+    fp_install com.valvesoftware.Steam
   else
-    cat > "$local_desktop/steam.desktop" <<EOF
+    log "Installing Steam (native‑first)…"
+    case "$PM" in
+      dnf)
+        install_native steam steam-devices steam-selinux
+        if [ $CLEANUP_DUPES -eq 1 ]; then fp_remove_if_present com.valvesoftware.Steam; fi
+        ;;
+      apt)
+        # On Ubuntu/Debian the ‘steam-installer’ may exist; fallback to Flatpak if unavailable
+        install_native steam-installer || install_native steam-launcher || true
+        if ! have steam; then
+          warn "Native Steam not found via APT — installing Flatpak Steam."
+          fp_install com.valvesoftware.Steam
+        else
+          [ $CLEANUP_DUPES -eq 1 ] && fp_remove_if_present com.valvesoftware.Steam
+        fi
+        ;;
+      pacman)
+        install_native steam || true
+        if ! have steam; then
+          warn "Native Steam not available — installing Flatpak Steam."
+          fp_install com.valvesoftware.Steam
+        else
+          [ $CLEANUP_DUPES -eq 1 ] && fp_remove_if_present com.valvesoftware.Steam
+        fi
+        ;;
+    esac
+  fi
+fi
+
+# -------- Steam SAFE LAUNCHER (universal) --------
+steam_safe_launcher() {
+  log "Creating Steam safe UI launcher (Wayland/SELinux/CEF‑friendly)…"
+  local USER_APPS="${HOME}/.local/share/applications"
+  local SCRIPTS_DIR="${HOME}/scripts"
+  local WRAPPER="${SCRIPTS_DIR}/steam_safe.sh"
+  mkdir -p "${SCRIPTS_DIR}" "${USER_APPS}"
+
+  # Wrapper: clears overlay env for UI, forces X11 for CEF, adds stable flags
+  cat > "${WRAPPER}" <<'EOF'
+#!/usr/bin/env bash
+# Steam safe UI launcher — clears overlays, forces X11 for CEF, adds stable flags
+
+# Unset overlay/injection variables so steamwebhelper won't preload them
+unset MANGOHUD MANGOHUD_DLSYM ENABLE_VKBASALT VKBASALT_CONFIG_FILE VKBASALT_LOG_FILE
+unset LD_PRELOAD DXVK_HUD __GL_THREADED_OPTIMIZATIONS VK_INSTANCE_LAYERS VK_LAYER_PATH
+unset ENABLE_GAMESCOPE GAMESCOPE GAMESCOPE_* GAMEDEBUG
+
+export QT_QPA_PLATFORM=xcb
+export SDL_VIDEODRIVER=x11
+
+# Optional per‑game overlay env file (not applied to UI because of unsets)
+[ -f "$HOME/.config/team-nocturnal/overlay.env" ] && . "$HOME/.config/team-nocturnal/overlay.env" || true
+
+if command -v /usr/bin/steam >/dev/null 2>&1 || command -v /usr/games/steam >/dev/null 2>&1; then
+  exec steam -no-cef-sandbox -cef-disable-gpu "$@"
+elif command -v flatpak >/dev/null 2>&1 && flatpak info com.valvesoftware.Steam >/dev/null 2>&1; then
+  exec flatpak run --env=QT_QPA_PLATFORM=xcb --env=SDL_VIDEODRIVER=x11 \
+    com.valvesoftware.Steam -- -no-cef-sandbox -cef-disable-gpu "$@"
+else
+  echo "Steam not found (native/flatpak)."
+  exit 1
+fi
+EOF
+  chmod +x "${WRAPPER}"
+
+  # .desktop entry (prefer native name if present; else distinct Flatpak name)
+  if have steam; then
+    cat > "${USER_APPS}/steam.desktop" <<EOF
 [Desktop Entry]
-Name=Steam (TN Overlays)
+Name=Steam
+Comment=Steam (safe UI launch)
+Exec=/home/${USER}/scripts/steam_safe.sh %U
+Terminal=false
 Type=Application
-TryExec=steam
-Exec=$wrapper %U
 Icon=steam
 Categories=Game;
+MimeType=x-scheme-handler/steam;
+StartupNotify=false
 EOF
+    xdg-mime default steam.desktop x-scheme-handler/steam 2>/dev/null || true
+    info "Wrote ${USER_APPS}/steam.desktop"
+  else
+    cat > "${USER_APPS}/steam-flatpak-safe.desktop" <<EOF
+[Desktop Entry]
+Name=Steam (Flatpak Safe)
+Comment=Steam (Flatpak) with safe UI flags
+Exec=/home/${USER}/scripts/steam_safe.sh %U
+Terminal=false
+Type=Application
+Icon=steam
+Categories=Game;
+MimeType=x-scheme-handler/steam;
+StartupNotify=false
+EOF
+    xdg-mime default steam-flatpak-safe.desktop x-scheme-handler/steam 2>/dev/null || true
+    info "Wrote ${USER_APPS}/steam-flatpak-safe.desktop"
   fi
-  sed -i -E "s|^Exec=.*|Exec=$wrapper %U|g" "$local_desktop/steam.desktop" || true
-  sed -i -E 's/%[Uuf]( +%[Uuf])+/ %U/g' "$local_desktop/steam.desktop" || true
-  update-desktop-database "$local_desktop" >/dev/null 2>&1 || true
 
-  ov_restart_steam_if_running
-  ov_games_status
+  update-desktop-database "${USER_APPS}" 2>/dev/null || true
+
+  # Clean problematic caches once (keeps games)
+  rm -rf ~/.steam/steam/{appcache,package,config/htmlcache,steamui} 2>/dev/null || true
+  rm -rf ~/.local/share/Steam/{appcache,package,config/htmlcache,steamui} 2>/dev/null || true
 }
+steam_safe_launcher
 
-ov_games_disable() {
-  ov_log "Disabling per‑game overlays (removing wrapper/desktop)…"
-  rm -f "$HOME/scripts/steam_with_overlays.sh" "$HOME/.local/share/applications/steam.desktop" 2>/dev/null || true
-  update-desktop-database "$HOME/.local/share/applications" >/dev/null 2>&1 || true
+# -------- MangoHud defaults (optional) --------
+if [ $WRITE_MANGOHUD_DEFAULTS -eq 1 ]; then
+  log "Writing MangoHud default config (~/.config/MangoHud/MangoHud.conf)…"
+  mkdir -p "${HOME}/.config/MangoHud"
+  cat > "${HOME}/.config/MangoHud/MangoHud.conf" <<'EOF'
+# Team Nocturnal — sensible MangoHud defaults (tweak with GOverlay)
+# Minimal overlay: FPS + frametime; toggle with RShift+F12
+fps_limit=0
+toggle_hud=RShift+F12
+position=top-left
+font_size=20
+cpu_stats=0
+gpu_stats=1
+gpu_temp=1
+vram=1
+fps=1
+frametime=1
+background_alpha=0.3
+EOF
+fi
 
-  # Also clear any live shell vars so overlays stop immediately
-  export -n MANGOHUD MANGOHUD_CONFIGFILE ENABLE_VKBASALT VK_INSTANCE_LAYERS VK_LAYER_PATH 2>/dev/null || true
-  unset     MANGOHUD MANGOHUD_CONFIGFILE ENABLE_VKBASALT VK_INSTANCE_LAYERS VK_LAYER_PATH 2>/dev/null || true
-
-  ov_restart_steam_if_running
-  ov_games_status
-}
-
-ov_games_status() {
-  echo "[Overlays] Status:"
-  [[ -x "$HOME/scripts/steam_with_overlays.sh" ]] \
-    && echo "  • Steam wrapper: $HOME/scripts/steam_with_overlays.sh" \
-    && grep -E '^Exec=' "$HOME/.local/share/applications/steam.desktop" 2>/dev/null \
-    || echo "  • No Steam wrapper"
-}
-
-ov_restart_steam_if_running() {
-  if pgrep -x steam >/dev/null 2>&1; then
-    ov_log "Restarting Steam to apply overlay changes…"
-    pkill -x steam || true
-    (nohup steam >/dev/null 2>&1 & disown) || true
-  fi
-}
-
-handle_overlays_only() {
-  case "$OVERLAYS_MODE" in
-    games) ov_games_enable ;;
-    none)  ov_games_disable ;;
-    status) ov_games_status ;;
-    "") echo "No overlay mode. Use --overlays=games|none|status"; return 1 ;;
-    *) echo "Unknown overlay mode: $OVERLAYS_MODE"; return 2 ;;
+# -------- Duplicate cleanup (Flatpak vs native) --------
+if [ $CLEANUP_DUPES -eq 1 ]; then
+  # If native present, remove Flatpak duplicates to avoid confusion
+  if have steam; then fp_remove_if_present com.valvesoftware.Steam; fi
+  case "$PM" in
+    dnf|pacman) if have discord; then fp_remove_if_present com.discordapp.Discord; fi ;;
+    apt) : ;; # native discord not reliable; we installed Flatpak earlier
   esac
-}
-
-# ===== Quick path: overlay-only =====
-if [[ -n "$OVERLAYS_MODE" && $OVERLAY_ONLY -eq 1 ]]; then
-  handle_overlays_only
-  exit $?
 fi
 
-# ===== Installs =====
-echo "==> Installing core gaming stack…"
-install_core
-
-if [[ $INSTALL_STEAM -eq 1 ]]; then
-  echo "==> Installing Steam…"
-  install_steam
-fi
-
-if [[ $INSTALL_LUTRIS -eq 1 ]]; then
-  echo "==> Installing Lutris…"
-  install_lutris
-fi
-
-if [[ $INSTALL_HEROIC -eq 1 ]]; then
-  echo "==> Installing Heroic…"
-  install_heroic
-fi
-
-if [[ $INSTALL_DISCORD -eq 1 ]]; then
-  echo "==> Installing Discord…"
-  install_discord
-fi
-
-echo "==> Proton tools…"
-install_proton_helpers
-
-echo "==> Extras (bundle dependent)…"
-install_obs_and_extras
-
-echo "==> Ensuring MangoHud defaults…"
-ensure_mangohud_config
-
-if [[ $KEEP_FLATPAK -eq 0 ]]; then
-  echo "==> Cleaning Flatpak duplicates (prefer native)…"
-  dedupe_apps
-fi
-
-# Optional: apply overlay choice after install
-if [[ -n "$OVERLAYS_MODE" ]]; then
-  handle_overlays_only || true
-fi
-
-echo
-echo "✅ Done."
-echo "Overlay controls (games only):"
-echo "  $HOME/scripts/universal_gaming_setup.sh --overlays=games  --overlay-only"
-echo "  $HOME/scripts/universal_gaming_setup.sh --overlays=none   --overlay-only"
-echo "  $HOME/scripts/universal_gaming_setup.sh --overlays=status --overlay-only"
-echo
-echo "Presets:"
-echo "  Lite:    core only"
-echo "  Normal:  core + Steam/Lutris/Heroic/Discord (default)"
-echo "  Full:    Normal + OBS Studio, Gamescope, GOverlay, v4l2loopback"
+log "All done. Log: ${LOG_FILE}"
+info "Launch Steam from your menu (safe launcher is now the default)."
+info "Use GOverlay to toggle MangoHud/vkBasalt per game (no system‑wide overlays)."
