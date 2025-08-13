@@ -193,7 +193,7 @@ chmod +x "${WRAPPER}"
 cat > "${USER_APPS}/steam.desktop" <<EOF
 [Desktop Entry]
 Name=Steam
-Comment=Steam (safe UI launch)
+Comment=Application for managing and playing games
 Exec=/home/${USER}/scripts/steam_safe.sh %U
 Terminal=false
 Type=Application
