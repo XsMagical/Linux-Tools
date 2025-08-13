@@ -2,7 +2,7 @@
 **By [XsMagical](https://github.com/XsMagical)**  
 
 A universal, native-first Linux gaming setup script designed for newcomers from Windows or Mac.  
-Installs essential gaming tools with minimal hassle and includes smart defaults for overlays — without breaking system apps.  
+Installs essential gaming tools with minimal hassle and includes smart defaults — without breaking system apps.  
 
 ---
 
@@ -62,7 +62,7 @@ chmod +x universal_gaming_setup.sh
 ## 📦 What It Installs
 
 - **Core tools:** MangoHud, GameMode, Vulkan tools, Wine, Winetricks, Protontricks  
-- **Launchers:** Steam, Lutris, Heroic Games Launcher  
+- **Launchers:** Steam (native-first), Lutris, Heroic Games Launcher  
 - **Proton Tools:** ProtonPlus (Fedora COPR), ProtonUp-Qt (Flatpak fallback)  
 - **Comms:** Discord  
 - **Extras (Full bundle):** OBS Studio, GOverlay, Gamescope, v4l2loopback  
@@ -77,11 +77,11 @@ Uses native-first logic with Flatpak fallback when needed — keeps your system 
 -y, --yes               Auto-confirm installations
 -v, --verbose           Verbose installation logs
 --native-only           Force native package installs
---flatpak-only          Force flatpak installs
---keep-flatpak          Keep flatpak versions even if native exists
---no-clean              Skip cleanup of duplicates
+--flatpak-only          Force Flatpak installs
+--keep-flatpak          Keep Flatpak versions even if native exists
+--no-clean              Skip cleanup of duplicate packages
 
-# Skip specific parts:
+# Skip specific apps:
 --no-steam
 --no-lutris
 --no-heroic
@@ -124,15 +124,27 @@ Uses native-first logic with Flatpak fallback when needed — keeps your system 
 
 ## 🛠 Troubleshooting
 
-**Overlay appears in non-games?**
+**Steam doesn’t launch or crashes on start?**
 ```bash
-./universal_gaming_setup.sh --overlays=none --overlay-only
-exec bash -l
+rm -rf ~/.steam ~/.local/share/Steam
+./universal_gaming_setup.sh --bundle=normal --native-only -y
 ```
 
-**Steam launcher not showing "(TN Overlays)"?**
+**Flatpak & native versions are conflicting?**
 ```bash
-./universal_gaming_setup.sh --overlays=games --overlay-only
+flatpak uninstall --unused
+sudo dnf remove steam  # (or apt/pacman/zypper equivalent)
+```
+
+**Proton tools missing in Steam?**
+```bash
+./universal_gaming_setup.sh --no-steam --protonplus --protonupqt -y
+```
+
+**Discord not launching voice correctly?**
+```bash
+flatpak uninstall com.discordapp.Discord
+./universal_gaming_setup.sh --discord=native -y
 ```
 
 ---
