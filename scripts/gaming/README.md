@@ -71,27 +71,6 @@ Uses native-first logic with Flatpak fallback when needed — keeps your system 
 
 ---
 
-## 🎯 Overlay Control (Per-Game via Steam)
-
-Overlays are now **strictly per-game** to avoid conflicts with non-gaming apps like OBS.  
-
-**Enable overlays for games (Steam only):**
-```bash
-./universal_gaming_setup.sh --overlays=games --overlay-only
-```
-
-**Disable overlays entirely:**
-```bash
-./universal_gaming_setup.sh --overlays=none --overlay-only
-```
-
-**Check current overlay status:**
-```bash
-./universal_gaming_setup.sh --overlays=status --overlay-only
-```
-
----
-
 ## ⚙ Optional Flags
 
 ```text
