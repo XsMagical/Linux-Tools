@@ -51,6 +51,15 @@ bash <(curl -s https://raw.githubusercontent.com/XsMagical/Linux-Tools/gui-gamin
 ---
 
 ### **Option 2: Run locally from your repo**
+
+# Create scripts folder & download the latest beta GUI gaming launcher
+```bash
+mkdir -p ~/scripts
+cd ~/scripts
+wget -O tn_gui_gaming_launcher.sh https://raw.githubusercontent.com/XsMagical/Linux-Tools/gui-gaming-beta/scripts/gaming/gui-beta/tn_gui_gaming_launcher.sh
+chmod +x tn_gui_gaming_launcher.sh
+```
+
 ```bash
 ~/Linux-Tools/scripts/gaming/gui-beta/tn_gui_gaming_launcher.sh --gui
 ```
