@@ -2,7 +2,7 @@
 # ==============================================================================
 # Team Nocturnal — Universal Gaming Setup Script
 # Author: XsMagical
-# Version: Native Steam Only + Full App List + Safe Launcher + Fedora42 Fixes
+# Version: Native Discord
 # ==============================================================================
 
 # ===== Colors for output =====
@@ -16,7 +16,7 @@ print_banner() {
   printf '%b\n' "${RED}   ██║   ██║ ╚████║${RESET}"
   printf '%b\n' "${RED}   ╚═╝   ╚═╝  ╚═══╝${RESET}"
   printf '%b\n' "${BLUE}----------------------------------------------------------${RESET}"
-  printf '%b\n' "${BLUE}   Team-Nocturnal.com \"Universal Gaming Setup\" by XsMagical${RESET}"
+  printf '%b\n' "${BLUE}   Team-Nocturnal.com Universal Gaming Setup by XsMagical${RESET}"
   printf '%b\n\n' "${BLUE}----------------------------------------------------------${RESET}"
 }
 
@@ -31,7 +31,7 @@ exec > >(tee -a "${LOG_FILE}") 2>&1
 
 # Flags
 YES_FLAG=0
-DISCORD_MODE="auto"
+DISCORD_MODE="native"
 CLEANUP_DUPES=1
 WRITE_MANGOHUD_DEFAULTS=0
 WANT_PROTONPLUS=0
@@ -70,38 +70,50 @@ if have dnf5; then PM="dnf5"
 elif have dnf; then PM="dnf"
 elif have apt; then PM="apt"
 elif have pacman; then PM="pacman"
-else warn "Unsupported distro (no dnf/apt/pacman)."; exit 1
+else
+  warn "No supported package manager found (dnf5/dnf/apt/pacman)."
+  exit 1
 fi
 
-$SUDO -v 2>/dev/null || true
-
-# Package helper functions
+# Basic install helpers
 install_native() {
   case "$PM" in
-    dnf5) $SUDO dnf5 install $DNF_Y -y "$@" || true ;;
-    dnf) $SUDO dnf install $DNF_Y -y "$@" || true ;;
-    apt) $SUDO apt update || true; $SUDO apt install $APT_Y "$@" || true ;;
-    pacman) $SUDO pacman -Sy $PAC_Y "$@" || true ;;
+    dnf5) $SUDO dnf5 install -y "$@" ;;
+    dnf)  $SUDO dnf install $DNF_Y -y "$@" ;;
+    apt)  $SUDO apt update && $SUDO apt install $APT_Y -y "$@" ;;
+    pacman) $SUDO pacman -Sy $PAC_Y --needed "$@" ;;
   esac
 }
 
 remove_native() {
   case "$PM" in
-    dnf5) $SUDO dnf5 remove -y "$@" || true ;;
-    dnf) $SUDO dnf remove -y "$@" || true ;;
-    apt) $SUDO apt purge -y "$@" || true ;;
-    pacman) $SUDO pacman -Rs $PAC_Y "$@" || true ;;
+    dnf5) $SUDO dnf5 remove -y "$@" ;;
+    dnf)  $SUDO dnf remove $DNF_Y -y "$@" ;;
+    apt)  $SUDO apt remove $APT_Y -y "$@" ;;
+    pacman) $SUDO pacman -Rns $PAC_Y "$@" ;;
   esac
 }
 
+ensure_flatpak() {
+  if ! have flatpak; then
+    install_native flatpak
+  fi
+  if ! flatpak remotes | awk '{print $1}' | grep -qx Flathub; then
+    $SUDO flatpak remote-add --if-not-exists Flathub https://flathub.org/repo/flathub.flatpakrepo
+  fi
+}
+
 fp_install() {
-  have flatpak || install_native flatpak
-  flatpak remote-add --if-not-exists --system flathub https://flathub.org/repo/flathub.flatpakrepo
-  flatpak install --system -y --noninteractive flathub "$1" || true
+  ensure_flatpak
+  if ! flatpak list --app | awk '{print $1}' | grep -qx "$1"; then
+    $SUDO flatpak install -y Flathub "$1"
+  fi
 }
 
 fp_remove_if_present() {
-  if have flatpak && flatpak info "$1" >/dev/null 2>&1; then
+  ensure_flatpak
+  if flatpak list --app | awk '{print $1}' | grep -qx "$1"; then
+    flatpak uninstall --user -y "$1" || true
     flatpak uninstall --system -y "$1" || true
   fi
 }
@@ -112,13 +124,15 @@ case "$PM" in
     log "Enabling multilib and RPM Fusion (dnf5)…"
     $SUDO dnf5 install -y dnf5-plugins
     $SUDO dnf5 config enable fedora-multilib || true
-    $SUDO dnf5 install $DNF_Y -y       https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm       https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
+    $SUDO dnf5 install $DNF_Y -y       https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm
+    $SUDO dnf5 install $DNF_Y -y https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
     ;;
   dnf)
     log "Enabling multilib and RPM Fusion (dnf)…"
     $SUDO dnf install -y dnf-plugins-core
-    $SUDO dnf config-manager --set-enabled fedora-multilib || true
-    $SUDO dnf install $DNF_Y -y       https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm       https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
+    $SUDO dnf config-manager --set-enabled fedora-modular updates-modular || true
+    $SUDO dnf install $DNF_Y -y       https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm
+    $SUDO dnf install $DNF_Y -y https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
     ;;
   apt)
     $SUDO add-apt-repository -y multiverse || true
@@ -132,13 +146,17 @@ esac
 # Core apps
 case "$PM" in
   dnf5|dnf)
-    install_native gamemode mangohud mangohud.i686                    wine wine-mono                    vulkan-loader vulkan-loader.i686                    mesa-dri-drivers mesa-dri-drivers.i686                    mesa-vulkan-drivers mesa-vulkan-drivers.i686                    lutris obs-studio
+    install_native gamemode mangohud mangohud.i686 \
+      wine winetricks vulkan-tools vulkan-loader.i686 \
+      lutris obs-studio
     ;;
   apt)
-    install_native gamemode mangohud                    wine wine64 winetricks                    vulkan-tools mesa-vulkan-drivers                    lutris obs-studio
+    install_native gamemode mangohud wine winetricks vulkan-tools \
+      mesa-vulkan-drivers mesa-vulkan-drivers:i386 lutris obs-studio
     ;;
   pacman)
-    install_native gamemode mangohud wine winetricks vulkan-tools vulkan-icd-loader lutris obs-studio
+    install_native gamemode mangohud lib32-mangohud \
+      wine winetricks vulkan-tools lutris obs-studio
     ;;
 esac
 
@@ -146,43 +164,76 @@ esac
 fp_install com.heroicgameslauncher.hgl
 fp_install com.github.gicmo.goverlay
 fp_install com.obsproject.Studio
-fp_install com.discordapp.Discord
+# (Discord handled below with native-first logic)
 
 # Proton tools
 [ $WANT_PROTONUPQT -eq 1 ] && fp_install net.davidotek.pupgui2
-[ $WANT_PROTONPLUS -eq 1 ] && [ "$PM" = "dnf5" -o "$PM" = "dnf" ] && $SUDO $PM -y copr enable wehagy/protonplus && install_native protonplus
+[ $WANT_PROTONPLUS -eq 1 ] && { [ "$PM" = "dnf5" ] || [ "$PM" = "dnf" ]; } && $SUDO dnf copr enable -y wehagy/protonplus && install_native protonplus || true
 
-# Discord cleanup
-if [ "$DISCORD_MODE" = "native" ] || { [ "$DISCORD_MODE" = "auto" ] && [ "$PM" != "apt" ]; }; then
-  install_native discord || fp_install com.discordapp.Discord
-  [ $CLEANUP_DUPES -eq 1 ] && fp_remove_if_present com.discordapp.Discord
-else
+# Discord install (native-first by default; flatpak fallback)
+if [ "$DISCORD_MODE" = "flatpak" ]; then
   fp_install com.discordapp.Discord
-  [ $CLEANUP_DUPES -eq 1 ] && remove_native discord
+  [ $CLEANUP_DUPES -eq 1 ] && remove_native discord || true
+else
+  if install_native discord; then
+    [ $CLEANUP_DUPES -eq 1 ] && fp_remove_if_present com.discordapp.Discord || true
+  else
+    fp_install com.discordapp.Discord
+  fi
 fi
 
 # Steam (native only, no steam-selinux)
 if [ $SKIP_STEAM -eq 0 ]; then
   if [ $IS_ARM -eq 1 ]; then
-    warn "ARM architecture — native Steam not available."; exit 1
+    warn "ARM detected — skipping Steam."
+  else
+    case "$PM" in
+      dnf5|dnf)
+        install_native steam
+        ;;
+      apt)
+        dpkg --print-foreign-architectures | grep -qx i386 || { $SUDO dpkg --add-architecture i386 && $SUDO apt update; }
+        install_native steam
+        ;;
+      pacman)
+        install_native steam
+        ;;
+    esac
   fi
-  case "$PM" in
-    dnf5|dnf) install_native steam steam-devices ;;
-    apt) install_native steam-installer || install_native steam-launcher ;;
-    pacman) install_native steam ;;
-  esac
-  have steam || { warn "Native Steam installation failed — aborting."; exit 1; }
+else
+  log "Skipping Steam per flag."
 fi
 
-# Safe launcher
-USER_APPS="${HOME}/.local/share/applications"
-SCRIPTS_DIR="${HOME}/scripts"
-WRAPPER="${SCRIPTS_DIR}/steam_safe.sh"
-mkdir -p "${SCRIPTS_DIR}" "${USER_APPS}"
+# Optional MangoHud defaults
+if [ $WRITE_MANGOHUD_DEFAULTS -eq 1 ]; then
+  mkdir -p "${HOME}/.config/MangoHud"
+  cat > "${HOME}/.config/MangoHud/MangoHud.conf" <<'EOF'
+fps_limit=0
+cpu_temp
+gpu_temp
+ram
+vram
+gamemode
+gpu_load_change
+frame_timing=1
+EOF
+fi
+
+# Create a safe Steam launcher wrapper (forces X11, disables CEF GPU)
+USER="${USER:-$(id -un)}"
+mkdir -p "/home/${USER}/scripts" "/home/${USER}/.local/share/applications"
+WRAPPER="/home/${USER}/scripts/steam_safe.sh"
+USER_APPS="/home/${USER}/.local/share/applications"
+
 cat > "${WRAPPER}" <<'EOF'
 #!/usr/bin/env bash
-unset MANGOHUD MANGOHUD_DLSYM ENABLE_VKBASALT VKBASALT_CONFIG_FILE VKBASALT_LOG_FILE
-unset LD_PRELOAD DXVK_HUD __GL_THREADED_OPTIMIZATIONS VK_INSTANCE_LAYERS VK_LAYER_PATH
+# Steam "safe" launcher for systems where CEF GPU / Wayland causes issues
+export __GL_SHADER_DISK_CACHE=1
+export __GL_THREADED_OPTIMIZATIONS=1
+export __GL_GSYNC_ALLOWED=0
+export __GL_VRR_ALLOWED=0
+export MANGOHUD_DIR="${HOME}/.config/MangoHud"
+
 unset ENABLE_GAMESCOPE GAMESCOPE GAMESCOPE_* GAMEDEBUG
 export QT_QPA_PLATFORM=xcb
 export SDL_VIDEODRIVER=x11
