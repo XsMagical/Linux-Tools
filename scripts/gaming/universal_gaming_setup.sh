@@ -50,7 +50,6 @@ VERBOSE=0
 DISCORD_MODE="native"       # native|flatpak
 BUNDLE="normal"             # lite|normal|full (gaming alias -> normal)
 
-  none) ;;
 # Derived toggles (bundle-driven; can be overridden by --no-*)
 WANT_STEAM=0
 WANT_WINE=1
@@ -132,9 +131,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --verbose) VERBOSE=1 ;;
     -y|--assume-yes|--yes) ASSUME_YES=1 ;;
-  none) ;;
     --discord=*) DISCORD_MODE="${1#*=}" ;;
-  none) ;;
     --bundle=*) BUNDLE="${1#*=}" ;;
     --no-steam) WANT_STEAM=0 ;;
     --no-wine) WANT_WINE=0 ;;
@@ -147,7 +144,6 @@ while [ $# -gt 0 ]; do
     --mangohud-defaults) WRITE_MANGOHUD_DEFAULTS=1 ;;
     --steam-clean-cache) STEAM_CLEAN_CACHE=1 ;;
     --refresh-shortcuts) REFRESH_SHORTCUTS=1 ;;
-  none) ;;
     *) ;;
   esac
   shift
@@ -193,6 +189,7 @@ REFRESH_SHORTCUTS=0
     WANT_GAMESCOPE=1
     WANT_V4L2LOOPBACK=1
     ;;
+  none) ;;
   none) ;;
   *) log "${RED}Unknown bundle:${RESET} $BUNDLE"; exit 1 ;;
 esac
