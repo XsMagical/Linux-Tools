@@ -190,7 +190,6 @@ REFRESH_SHORTCUTS=0
     WANT_V4L2LOOPBACK=1
     ;;
   none) ;;
-  none) ;;
   *) log "${RED}Unknown bundle:${RESET} $BUNDLE"; exit 1 ;;
 esac
 
