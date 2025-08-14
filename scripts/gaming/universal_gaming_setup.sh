@@ -560,3 +560,6 @@ fix_menu_categories() {
     log "Shortcuts refreshed. Categories updated for Steam/Discord (user overrides)."
   fi
 }
+
+# Auto-run menu fix at end (guarded)
+type fix_menu_categories >/dev/null 2>&1 && fix_menu_categories
