@@ -149,6 +149,14 @@ flatpak uninstall com.discordapp.Discord
 
 ---
 
+## 🔄 Enable per game overlay in Steam launcher options
+
+```bash
+MANGOHUD=1 ENABLE_VKBASALT=0 %command%
+```
+
+---
+
 ## 🔄 Update Script
 
 ```bash
