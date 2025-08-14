@@ -60,6 +60,9 @@ WANT_MANGOHUD=1
 WANT_PROTON_TOOLS=0
 WANT_OBS=0
 WANT_GOVERLAY=0
+WRITE_MANGOHUD_DEFAULTS=0
+STEAM_CLEAN_CACHE=0
+REFRESH_SHORTCUTS=0
 WANT_GAMESCOPE=0
 WANT_V4L2LOOPBACK=0
 
@@ -139,6 +142,8 @@ while [ $# -gt 0 ]; do
     --protonplus) WANT_PROTONPLUS=1 ;;
     --protonupqt) WANT_PROTONUPQT=1 ;;
     --mangohud-defaults) WRITE_MANGOHUD_DEFAULTS=1 ;;
+    --steam-clean-cache) STEAM_CLEAN_CACHE=1 ;;
+    --refresh-shortcuts) REFRESH_SHORTCUTS=1 ;;
     *) ;;
   esac
   shift
@@ -153,6 +158,9 @@ case "$BUNDLE" in
     WANT_PROTON_TOOLS=1
     WANT_OBS=0
     WANT_GOVERLAY=0
+WRITE_MANGOHUD_DEFAULTS=0
+STEAM_CLEAN_CACHE=0
+REFRESH_SHORTCUTS=0
     WANT_GAMESCOPE=0
     WANT_V4L2LOOPBACK=0
     ;;
@@ -163,6 +171,9 @@ case "$BUNDLE" in
     WANT_PROTON_TOOLS=0
     WANT_OBS=0
     WANT_GOVERLAY=0
+WRITE_MANGOHUD_DEFAULTS=0
+STEAM_CLEAN_CACHE=0
+REFRESH_SHORTCUTS=0
     WANT_GAMESCOPE=0
     WANT_V4L2LOOPBACK=0
     ;;
@@ -310,6 +321,7 @@ install_v4l2loopback() {
 write_mangohud_defaults() {
   mkdir -p "${HOME}/.config/MangoHud"
   cat > "${HOME}/.config/MangoHud/MangoHud.conf" <<'EOF'
+# Team Nocturnal sane defaults
 fps_limit=0
 cpu_temp
 gpu_temp
@@ -318,9 +330,39 @@ vram
 gamemode
 gpu_load_change
 frame_timing=1
+# Add a sensible toggle so users can hide/show overlay
+toggle_hud=Shift_R+F12
 EOF
 }
 
+
+# ----- Fixes & Maintenance helpers -----
+ensure_gamemode_service() {
+  if command -v gamemoded >/dev/null 2>&1 || systemctl list-unit-files | grep -q '^gamemoded\.service'; then
+    sudo systemctl enable --now gamemoded 2>/dev/null || true
+  fi
+}
+
+steam_clean_cache() {
+  # optional destructive cleanup of Steam's package cache to fix update loops
+  local S="${HOME}/.local/share/Steam"
+  rm -rf "${S}/package" 2>/dev/null || true
+  rm -f "${S}/config/update_hosts_cached.vdf" 2>/dev/null || true
+  echo "Steam package cache cleared."
+}
+
+refresh_shortcuts_all() {
+  # Rebuild desktop/menu caches for user and system; then rebuild KDE ksycoca
+  update-desktop-database "${HOME}/.local/share/applications" 2>/dev/null || true
+  sudo update-desktop-database /usr/share/applications 2>/dev/null || true
+  update-mime-database "${HOME}/.local/share/mime" 2>/dev/null || true
+  sudo update-mime-database /usr/share/mime 2>/dev/null || true
+  gtk-update-icon-cache -f "${HOME}/.local/share/icons/hicolor" 2>/dev/null || true
+  sudo gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
+  # KDE/Plasma cache
+  rm -f "${HOME}"/.cache/ksycoca6_* 2>/dev/null || true
+  command -v kbuildsycoca6 >/dev/null 2>&1 && kbuildsycoca6 --noincremental 2>/dev/null || true
+}
 # ===== Status Summary =====
 fp_has() { fp_installed "$1"; }
 status_line() {
@@ -393,6 +435,7 @@ main() {
   # Core
   if [ "$WANT_WINE" -eq 1 ] || [ "$WANT_GAMEMODE" -eq 1 ] || [ "$WANT_MANGOHUD" -eq 1 ]; then
     install_core_stack
+    ensure_gamemode_service
   fi
 
   # Normal / Full
@@ -412,6 +455,8 @@ main() {
 
   # Optional MangoHud defaults
   [ "$WRITE_MANGOHUD_DEFAULTS" -eq 1 ] && write_mangohud_defaults
+  [ "$STEAM_CLEAN_CACHE" -eq 1 ] && steam_clean_cache
+  [ "$REFRESH_SHORTCUTS" -eq 1 ] && refresh_shortcuts_all
 
   print_status
 }
