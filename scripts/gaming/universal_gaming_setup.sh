@@ -338,9 +338,31 @@ EOF
 
 # ----- Fixes & Maintenance helpers -----
 ensure_gamemode_service() {
-  if command -v gamemoded >/dev/null 2>&1 || systemctl list-unit-files | grep -q '^gamemoded\.service'; then
-    sudo systemctl enable --now gamemoded 2>/dev/null || true
+  # Install GameMode if missing
+  if ! rpm -q gamemode >/dev/null 2>&1; then
+    log "Installing GameMode..."
+    sudo dnf install -y gamemode gamemode.i686 || return 0
   fi
+
+  # Prefer user service on Fedora
+  if systemctl --user list-unit-files 2>/dev/null | grep -q "^gamemoded\.service"; then
+    systemctl --user daemon-reload || true
+    if systemctl --user enable --now gamemoded; then
+      log "GameMode (user) running."
+      return 0
+    fi
+  fi
+
+  # Fallback: system service (for other distros/layouts)
+  if systemctl list-unit-files 2>/dev/null | grep -q "^gamemoded\.service"; then
+    sudo systemctl daemon-reload || true
+    if sudo systemctl enable --now gamemoded; then
+      log "GameMode (system) running."
+      return 0
+    fi
+  fi
+
+  log "${RED}Warning:${RESET} gamemoded.service not found (user or system)."
 }
 
 steam_clean_cache() {
