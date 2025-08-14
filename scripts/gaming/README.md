@@ -49,6 +49,15 @@ chmod +x universal_gaming_setup.sh
 
 ---
 
+## 🔄 Update Script
+
+```bash
+cd ~/scripts
+wget -O universal_gaming_setup.sh https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/gaming/universal_gaming_setup.sh
+chmod +x universal_gaming_setup.sh
+```
+---
+
 ## 📦 Install Bundles
 
 | Bundle | Description | Command |
@@ -157,15 +166,6 @@ MANGOHUD=1 ENABLE_VKBASALT=0 %command%
 
 ---
 
-## 🔄 Update Script
-
-```bash
-cd ~/scripts
-wget -O universal_gaming_setup.sh https://raw.githubusercontent.com/XsMagical/Linux-Tools/main/scripts/gaming/universal_gaming_setup.sh
-chmod +x universal_gaming_setup.sh
-```
-
----
 
 ## 🔗 Links & License
 
