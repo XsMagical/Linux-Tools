@@ -390,54 +390,6 @@ refresh_shortcuts_all() {
 }
 
 # ----- Menu category fixes (Steam/Discord -> Games) -----
-fix_menu_categories() {
-  local changed=0
-  local files=(
-    "/usr/share/applications/steam.desktop"
-    "$HOME/.local/share/applications/steam.desktop"
-    "$HOME/.local/share/flatpak/exports/share/applications/com.valvesoftware.Steam.desktop"
-    "/var/lib/flatpak/exports/share/applications/com.valvesoftware.Steam.desktop"
-    "/usr/share/applications/discord.desktop"
-    "$HOME/.local/share/applications/discord.desktop"
-    "$HOME/.local/share/flatpak/exports/share/applications/com.discordapp.Discord.desktop"
-    "/var/lib/flatpak/exports/share/applications/com.discordapp.Discord.desktop"
-  )
-
-  for f in "${files[@]}"; do
-    [ -f "$f" ] || continue
-    case "$f" in
-      *steam*.desktop|*valvesoftware.Steam*.desktop)
-        # Force Steam into Games category
-        if grep -q "^Categories=" "$f" 2>/dev/null; then
-          sed -i -E "s/^Categories=.*/Categories=Game;/" "$f" && changed=1
-        else
-          printf "\nCategories=Game;\n" >> "$f" && changed=1
-        fi
-        ;;
-      *discord*.desktop|*discordapp.Discord*.desktop)
-        # Force Discord into Games + Chat
-        if grep -q "^Categories=" "$f" 2>/dev/null; then
-          sed -i -E "s/^Categories=.*/Categories=Game;Chat;/" "$f" && changed=1
-        else
-          printf "\nCategories=Game;Chat;\n" >> "$f" && changed=1
-        fi
-        ;;
-    esac
-  done
-
-  if [ "$changed" -eq 1 ]; then
-    # Refresh caches so menu updates immediately
-    update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
-    sudo update-desktop-database /usr/share/applications 2>/dev/null || true
-    update-mime-database "$HOME/.local/share/mime" 2>/dev/null || true
-    sudo update-mime-database /usr/share/mime 2>/dev/null || true
-    gtk-update-icon-cache -f "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
-    sudo gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true
-    # KDE menu cache
-    kbuildsycoca6 --noincremental 2>/dev/null || true
-    log "Shortcuts refreshed. Categories updated for Steam/Discord."
-  fi
-}
 
 
 # ---- Patch-only handler (runs after function definitions) ----
@@ -554,3 +506,57 @@ main() {
 }
 
 main "$@"
+
+# ----- Menu category fixes (Steam/Discord -> Games via user overrides) -----
+fix_menu_categories() {
+  local target_dir="$HOME/.local/share/applications"
+  mkdir -p "$target_dir"
+
+  # Map of possible source .desktop files -> target IDs
+  declare -A MAP=(
+    ["/usr/share/applications/steam.desktop"]="steam.desktop"
+    ["$HOME/.local/share/applications/steam.desktop"]="steam.desktop"
+    ["$HOME/.local/share/flatpak/exports/share/applications/com.valvesoftware.Steam.desktop"]="com.valvesoftware.Steam.desktop"
+    ["/var/lib/flatpak/exports/share/applications/com.valvesoftware.Steam.desktop"]="com.valvesoftware.Steam.desktop"
+    ["/usr/share/applications/discord.desktop"]="discord.desktop"
+    ["$HOME/.local/share/applications/discord.desktop"]="discord.desktop"
+    ["$HOME/.local/share/flatpak/exports/share/applications/com.discordapp.Discord.desktop"]="com.discordapp.Discord.desktop"
+    ["/var/lib/flatpak/exports/share/applications/com.discordapp.Discord.desktop"]="com.discordapp.Discord.desktop"
+  )
+
+  local changed=0
+  for src in "${!MAP[@]}"; do
+    [ -f "$src" ] || continue
+    dst="$target_dir/${MAP[$src]}"
+    # Copy source to user override if different or missing
+    if [ ! -f "$dst" ] || ! cmp -s "$src" "$dst"; then
+      cp -f "$src" "$dst" || true
+    fi
+    # Normalize Categories based on app
+    case "$dst" in
+      *steam*.desktop|*valvesoftware.Steam*.desktop)
+        if grep -q "^Categories=" "$dst" 2>/dev/null; then
+          sed -i -E "s/^Categories=.*/Categories=Game;/" "$dst" && changed=1
+        else
+          printf "\nCategories=Game;\n" >> "$dst" && changed=1
+        fi
+        ;;
+      *discord*.desktop|*discordapp.Discord*.desktop)
+        if grep -q "^Categories=" "$dst" 2>/dev/null; then
+          sed -i -E "s/^Categories=.*/Categories=Game;Chat;/" "$dst" && changed=1
+        else
+          printf "\nCategories=Game;Chat;\n" >> "$dst" && changed=1
+        fi
+        ;;
+    esac
+    # Ensure the Exec key remains intact (don’t break launch)
+    grep -q "^Exec=" "$dst" || cp -f "$src" "$dst"
+  done
+
+  if [ "$changed" -eq 1 ]; then
+    update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
+    # KDE menu cache
+    kbuildsycoca6 --noincremental 2>/dev/null || true
+    log "Shortcuts refreshed. Categories updated for Steam/Discord (user overrides)."
+  fi
+}
