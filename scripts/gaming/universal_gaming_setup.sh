@@ -150,6 +150,23 @@ while [ $# -gt 0 ]; do
 done
 
 # Bundle mapping
+
+# ---- Patch-only handler (runs before bundle switch) ----
+if [ "$BUNDLE" = "none" ]; then
+  log "Patch-only mode: applying maintenance fixes..."
+  # Steam cache cleanup if requested
+  [ "$STEAM_CLEAN_CACHE" -eq 1 ] && steam_clean_cache
+  # Shortcut / MIME / icon cache refresh if requested
+  [ "$REFRESH_SHORTCUTS" -eq 1 ] && refresh_shortcuts_all
+  # Try to start GameMode if it is installed (no installs in patch-only)
+  if systemctl --user list-unit-files 2>/dev/null | grep -q "^gamemoded\.service"; then
+    systemctl --user enable --now gamemoded 2>/dev/null || true
+  elif systemctl list-unit-files 2>/dev/null | grep -q "^gamemoded\.service"; then
+    sudo systemctl enable --now gamemoded 2>/dev/null || true
+  fi
+  exit 0
+fi
+
 case "$BUNDLE" in
   gaming|normal)
     WANT_STEAM=1
