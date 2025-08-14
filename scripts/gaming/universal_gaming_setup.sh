@@ -4,20 +4,19 @@
 # Author: XsMagical
 # Repo: https://github.com/XsMagical/Linux-Tools
 #
-# Bundles (aligned with docs):
-#   --bundle=lite    : Core tools only (Wine, Winetricks, Vulkan tools, MangoHud, GameMode)
-#   --bundle=normal  : lite + Steam, Lutris, Heroic, Discord, Proton tools
-#   --bundle=full    : normal + OBS, GOverlay, Gamescope, v4l2loopback
-#   (Alias kept: --bundle=gaming == normal)
+# Bundles:
+#   --bundle=lite   : Core tools only (Wine, Winetricks, Vulkan tools, MangoHud, GameMode)
+#   --bundle=normal : lite + Steam, Lutris, Heroic, Discord, Proton tools
+#   --bundle=full   : normal + OBS, GOverlay, Gamescope, v4l2loopback
+#   (alias: --bundle=gaming == normal)
 #
 # Changes:
-# - Fix: Native-first Discord across distros with repo refresh + one retry; Flatpak fallback.
-# - Robust, portable quoting (no escaped quotes), LF endings.
-# - Accurate Flatpak ID detection (Heroic, Discord, etc.).
-# - End-of-run status (✅/❌) for ALL apps handled by this script.
+# - Native-first Discord with repo refresh + one retry, Flatpak fallback.
+# - Accurate Flatpak ID detection (Heroic, Discord, OBS, GOverlay, MangoHud layer).
+# - End-of-run ✅/❌ summary for every app installed by this script.
+# - Keeps flags simple: --bundle=..., -y/--assume-yes/--yes, --discord=native|flatpak, --verbose.
+#   Legacy flags kept (no-ops if unused): --no-*, --protonplus, --protonupqt, --mangohud-defaults.
 # =============================================================================
-
-set -e
 
 # ===== Colors & Banner =====
 RED="\033[31m"; BLUE="\033[34m"; GREEN="\033[32m"; RESET="\033[0m"; BOLD="\033[1m"; DIM="\033[2m"
@@ -49,10 +48,9 @@ print_banner() {
 ASSUME_YES=0
 VERBOSE=0
 DISCORD_MODE="native"       # native|flatpak
-OVERLAYS_MODE="none"        # kept for compatibility
-BUNDLE="normal"             # lite|normal|full (gaming==normal for compat)
+BUNDLE="normal"             # lite|normal|full (gaming alias -> normal)
 
-# Feature toggles (derived from bundle; can be overridden by --no-* flags)
+# Derived toggles (bundle-driven; can be overridden by --no-*)
 WANT_STEAM=0
 WANT_WINE=1
 WANT_LUTRIS=0
@@ -65,16 +63,21 @@ WANT_GOVERLAY=0
 WANT_GAMESCOPE=0
 WANT_V4L2LOOPBACK=0
 
+# Legacy/optional toggles (kept for compatibility; safe defaults)
+WANT_PROTONPLUS=0
+WANT_PROTONUPQT=0
+WRITE_MANGOHUD_DEFAULTS=0
+
 log() { printf '%b
 ' "$*"; }
 have() { command -v "$1" >/dev/null 2>&1; }
 yesflag() { [ "$ASSUME_YES" -eq 1 ] && echo "-y" || echo ""; }
 
 pm_detect() {
-  if   have dnf5;   then PM="dnf5";  OSF="fedora"
-  elif have dnf;    then PM="dnf";   OSF="fedora"
-  elif have apt-get;then PM="apt";   OSF="debian"
-  elif have pacman; then PM="pacman";OSF="arch"
+  if   have dnf5;    then PM="dnf5";   OSF="fedora"
+  elif have dnf;     then PM="dnf";    OSF="fedora"
+  elif have apt-get; then PM="apt";    OSF="debian"
+  elif have pacman;  then PM="pacman"; OSF="arch"
   else
     log "${RED}Unsupported distro (need dnf/apt/pacman).${RESET}"
     exit 1
@@ -99,7 +102,7 @@ pkg_remove() {
   esac
 }
 
-# Flatpak helpers
+# ----- Flatpak helpers -----
 flatpak_ensure() {
   if ! have flatpak; then pkg_install flatpak; fi
   if ! flatpak remotes | awk '{print $1}' | grep -qx Flathub; then
@@ -110,7 +113,7 @@ fp_installed() { flatpak list --app --columns=application | grep -qx "$1"; }
 fp_install() { flatpak_ensure; sudo flatpak install -y Flathub "$1"; }
 fp_remove_if_present() { flatpak_ensure; fp_installed "$1" && flatpak uninstall -y "$1" || true; }
 
-# Quick repo refresh (safe; no full upgrades)
+# ----- Quick repo refresh (safe; no full upgrades) -----
 refresh_repos_quick() {
   case "$PM" in
     dnf5)   sudo dnf5 clean metadata || true; sudo dnf5 clean all || true; sudo dnf5 --refresh makecache || true ;;
@@ -121,13 +124,11 @@ refresh_repos_quick() {
 }
 
 # ===== Arg parse =====
-RAW_ARGS=("$@")
 while [ $# -gt 0 ]; do
   case "$1" in
     --verbose) VERBOSE=1 ;;
     -y|--assume-yes|--yes) ASSUME_YES=1 ;;
     --discord=*) DISCORD_MODE="${1#*=}" ;;
-    --overlays=*) OVERLAYS_MODE="${1#*=}" ;;
     --bundle=*) BUNDLE="${1#*=}" ;;
     --no-steam) WANT_STEAM=0 ;;
     --no-wine) WANT_WINE=0 ;;
@@ -135,12 +136,15 @@ while [ $# -gt 0 ]; do
     --no-heroic) WANT_HEROIC=0 ;;
     --no-gamemode) WANT_GAMEMODE=0 ;;
     --no-mangohud) WANT_MANGOHUD=0 ;;
+    --protonplus) WANT_PROTONPLUS=1 ;;
+    --protonupqt) WANT_PROTONUPQT=1 ;;
+    --mangohud-defaults) WRITE_MANGOHUD_DEFAULTS=1 ;;
     *) ;;
   esac
   shift
 done
 
-# Bundle mapping (gaming alias)
+# Bundle mapping
 case "$BUNDLE" in
   gaming|normal)
     WANT_STEAM=1
@@ -172,8 +176,7 @@ case "$BUNDLE" in
     WANT_GAMESCOPE=1
     WANT_V4L2LOOPBACK=1
     ;;
-  *)
-    log "${RED}Unknown bundle:${RESET} $BUNDLE"; exit 1 ;;
+  *) log "${RED}Unknown bundle:${RESET} $BUNDLE"; exit 1 ;;
 esac
 
 # ===== Installers =====
@@ -266,7 +269,11 @@ install_discord_native_first() {
           fp_remove_if_present com.discordapp.Discord || true
         else
           tmpd="$(mktemp -d)"
-          ( cd "$tmpd" && wget -O discord.deb 'https://discord.com/api/download?platform=linux&format=deb' && sudo apt-get install -y ./discord.deb )             && { fp_remove_if_present com.discordapp.Discord || true; rm -rf "$tmpd"; return 0; }
+          ( cd "$tmpd" && wget -O discord.deb 'https://discord.com/api/download?platform=linux&format=deb' && sudo apt-get install -y ./discord.deb ) && {
+            fp_remove_if_present com.discordapp.Discord || true
+            rm -rf "$tmpd"
+            return 0
+          }
           rm -rf "$tmpd"
           fp_install com.discordapp.Discord
         fi
@@ -299,9 +306,27 @@ install_v4l2loopback() {
   esac
 }
 
+# Optional MangoHud defaults
+write_mangohud_defaults() {
+  mkdir -p "${HOME}/.config/MangoHud"
+  cat > "${HOME}/.config/MangoHud/MangoHud.conf" <<'EOF'
+fps_limit=0
+cpu_temp
+gpu_temp
+ram
+vram
+gamemode
+gpu_load_change
+frame_timing=1
+EOF
+}
+
 # ===== Status Summary =====
 fp_has() { fp_installed "$1"; }
-status_line() { local ok="$1"; local label="$2"; local detail="$3"; if [ "$ok" -eq 0 ]; then echo -e "${CHECK} ${label}: ${detail}"; else echo -e "${XMARK} ${label}: ${detail}"; fi; }
+status_line() {
+  local ok="$1"; local label="$2"; local detail="$3"
+  if [ "$ok" -eq 0 ]; then echo -e "${CHECK} ${label}: ${detail}"; else echo -e "${XMARK} ${label}: ${detail}"; fi
+}
 
 print_status() {
   echo "----------------------------------------------------------"
@@ -348,7 +373,7 @@ print_status() {
 
   if lsmod | grep -q '^v4l2loopback'; then status_line 0 "v4l2loopback" "Kernel module loaded"
   else
-    if [ -e "/lib/modules/$(uname -r)/extra/v4l2loopback.ko"* ] || [ -e "/lib/modules/$(uname -r)/updates/dkms/v4l2loopback.ko"* ]; then
+    if lsmod | grep -q v4l2loopback || [ -e "/lib/modules/$(uname -r)/extra/v4l2loopback.ko"* ] || [ -e "/lib/modules/$(uname -r)/updates/dkms/v4l2loopback.ko"* ]; then
       status_line 0 "v4l2loopback" "Installed (module not loaded)"
     else
       status_line 1 "v4l2loopback" "Not installed"
@@ -358,31 +383,35 @@ print_status() {
   echo "----------------------------------------------------------"
 }
 
+# ===== Main =====
 main() {
   print_banner
   pm_detect
   [ "$VERBOSE" -eq 1 ] && set -x
   refresh_repos_quick
 
-  # Core stack (always for lite/normal/full unless explicitly disabled)
+  # Core
   if [ "$WANT_WINE" -eq 1 ] || [ "$WANT_GAMEMODE" -eq 1 ] || [ "$WANT_MANGOHUD" -eq 1 ]; then
     install_core_stack
   fi
 
-  # normal/full
+  # Normal / Full
   [ "$WANT_STEAM" -eq 1 ] && install_steam
   [ "$WANT_LUTRIS" -eq 1 ] && install_lutris
   [ "$WANT_HEROIC" -eq 1 ] && install_heroic
   [ "$WANT_PROTON_TOOLS" -eq 1 ] && install_proton_tools
 
-  # Discord (native-first with retry)
+  # Discord
   install_discord_native_first
 
-  # full extras
+  # Full extras
   [ "$WANT_OBS" -eq 1 ] && install_obs
   [ "$WANT_GOVERLAY" -eq 1 ] && install_goverlay
   [ "$WANT_GAMESCOPE" -eq 1 ] && install_gamescope
   [ "$WANT_V4L2LOOPBACK" -eq 1 ] && install_v4l2loopback
+
+  # Optional MangoHud defaults
+  [ "$WRITE_MANGOHUD_DEFAULTS" -eq 1 ] && write_mangohud_defaults
 
   print_status
 }
