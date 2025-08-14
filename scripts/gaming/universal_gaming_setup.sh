@@ -1,11 +1,35 @@
 #!/usr/bin/env bash
-# ==============================================================================
-# Team Nocturnal — Universal Gaming Setup Script
-# Author: XsMagical
-# Version: Native Steam Only + Full App List + Safe Launcher + Fedora42 Fixes
-# ==============================================================================
+# Team Nocturnal — Universal Gaming Setup (native Discord by default) by XsMagical
+# Repo: https://github.com/XsMagical/Linux-Tools
+#
+# Summary:
+# - Cross‑distro gaming bootstrap for Fedora/RHEL, Ubuntu/Debian, and Arch/Manjaro.
+# - Prioritizes NATIVE packages over Flatpak (and removes duplicates).
+# - Installs Steam, Proton tooling, Wine + Vulkan bits, MangoHud, GameMode, Lutris, Heroic, etc.
+# - **Discord defaults to native (RPM/DEB/pacman) and only falls back to Flatpak if native is unavailable.**
+# - Safe to re‑run; idempotent installers; detects package manager automatically.
+#
+# Usage (examples):
+#   sudo ~/scripts/universal_gaming_setup.sh
+#   sudo ~/scripts/universal_gaming_setup.sh --overlays=none
+#   sudo ~/scripts/universal_gaming_setup.sh --discord=flatpak     # force Flatpak Discord
+#   sudo ~/scripts/universal_gaming_setup.sh --discord=native      # force native Discord (default)
+#   sudo ~/scripts/universal_gaming_setup.sh --no-heroic --no-lutris
+#
+# Flags:
+#   --discord=native|flatpak     Choose Discord source (default: native; auto-fallback to Flatpak if needed)
+#   --overlays=none|steam|game   Overlay presets: none (default), Steam-only, or per‑game template
+#   --no-steam|--no-wine|--no-lutris|--no-heroic|--no-gamemode|--no-mangohud
+#   --verbose                    Show commands being run
+#   -y|--assume-yes              Assume yes to package prompts
+#
+# Notes:
+# - Fedora: enables RPM Fusion (free+nonfree) automatically.
+# - Ubuntu/Debian: ensures universe/multiverse (Ubuntu) and contrib/non-free(/non-free-firmware) (Debian) when possible.
+# - Arch: uses pacman; skips Steam on ARM.
+# - Flatpak is used as a fallback when native isn’t available (e.g., Discord on some Debian/Ubuntu setups).
 
-# ===== Colors for output =====
+# ===== Colors =====
 RED="\033[31m"; BLUE="\033[34m"; RESET="\033[0m"; BOLD="\033[1m"; DIM="\033[2m"
 
 print_banner() {
@@ -16,189 +40,365 @@ print_banner() {
   printf '%b\n' "${RED}   ██║   ██║ ╚████║${RESET}"
   printf '%b\n' "${RED}   ╚═╝   ╚═╝  ╚═══╝${RESET}"
   printf '%b\n' "${BLUE}----------------------------------------------------------${RESET}"
-  printf '%b\n' "${BLUE}   Team-Nocturnal.com \"Universal Gaming Setup\" by XsMagical${RESET}"
+  printf '%b\n' "${BLUE}   Team-Nocturnal.com Universal Gaming Setup by XsMagical${RESET}"
   printf '%b\n\n' "${BLUE}----------------------------------------------------------${RESET}"
 }
 
-print_banner
-set -u
+# ===== Defaults & Globals =====
+ASSUME_YES=0
+VERBOSE=0
+DISCORD_MODE="native"   # native | flatpak
+OVERLAYS_MODE="none"    # none | steam | game
 
-# Logging setup
-LOG_DIR="${HOME}/scripts/logs"
-mkdir -p "${LOG_DIR}"
-LOG_FILE="${LOG_DIR}/gaming_$(date +%Y%m%d_%H%M%S).log"
-exec > >(tee -a "${LOG_FILE}") 2>&1
+# Feature toggles (on by default)
+WANT_STEAM=1
+WANT_WINE=1
+WANT_LUTRIS=1
+WANT_HEROIC=1
+WANT_GAMEMODE=1
+WANT_MANGOHUD=1
 
-# Flags
-YES_FLAG=0
-DISCORD_MODE="auto"
-CLEANUP_DUPES=1
-WRITE_MANGOHUD_DEFAULTS=0
-WANT_PROTONPLUS=0
-WANT_PROTONUPQT=0
-SKIP_STEAM=0
+PM=""; OS_FAMILY=""; OS_ID=""; OS_VER_ID=""
 
-# Helper functions
-have() { command -v "$1" >/dev/null 2>&1; }
-log() { printf '%b\n' "${BOLD}==>${RESET} $*"; }
-warn(){ printf '%b\n' "${RED}[!]${RESET} $*"; }
+log() { printf '%b\n' "$*"; }
+run() { if [ "$VERBOSE" -eq 1 ]; then set -x; fi; "$@"; local rc=$?; if [ "$VERBOSE" -eq 1 ]; then set +x; fi; return $rc; }
+yesflag() { [ "$ASSUME_YES" -eq 1 ] && echo "-y" || echo ""; }
 
-# Parse args
+# ===== Arg Parse =====
 while [ $# -gt 0 ]; do
   case "$1" in
-    --discord=*) DISCORD_MODE="${1#*=}";;
-    --no-cleanup-flatpak-dupes) CLEANUP_DUPES=0;;
-    --mangohud-defaults) WRITE_MANGOHUD_DEFAULTS=1;;
-    --protonplus) WANT_PROTONPLUS=1;;
-    --protonupqt) WANT_PROTONUPQT=1;;
-    --skip-steam) SKIP_STEAM=1;;
-    -y|--yes) YES_FLAG=1;;
+    --verbose) VERBOSE=1 ;;
+    -y|--assume-yes) ASSUME_YES=1 ;;
+    --discord=*) DISCORD_MODE="${1#*=}" ;;
+    --overlays=*) OVERLAYS_MODE="${1#*=}" ;;
+    --no-steam) WANT_STEAM=0 ;;
+    --no-wine) WANT_WINE=0 ;;
+    --no-lutris) WANT_LUTRIS=0 ;;
+    --no-heroic) WANT_HEROIC=0 ;;
+    --no-gamemode) WANT_GAMEMODE=0 ;;
+    --no-mangohud) WANT_MANGOHUD=0 ;;
+    *) log "${RED}Unknown flag:${RESET} $1"; exit 1 ;;
   esac
   shift
 done
 
-SUDO="sudo"
-[ $YES_FLAG -eq 1 ] && DNF_Y="-y" || DNF_Y=""
-[ $YES_FLAG -eq 1 ] && APT_Y="-y" || APT_Y=""
-[ $YES_FLAG -eq 1 ] && PAC_Y="--noconfirm" || PAC_Y=""
-ARCH="$(uname -m)"
-IS_ARM=0
-[ "${ARCH}" = "aarch64" ] && IS_ARM=1
-
-# Detect PM
-if have dnf5; then PM="dnf5"
-elif have dnf; then PM="dnf"
-elif have apt; then PM="apt"
-elif have pacman; then PM="pacman"
-else warn "Unsupported distro (no dnf/apt/pacman)."; exit 1
-fi
-
-$SUDO -v 2>/dev/null || true
-
-# Package helper functions
-install_native() {
-  case "$PM" in
-    dnf5) $SUDO dnf5 install $DNF_Y -y "$@" || true ;;
-    dnf) $SUDO dnf install $DNF_Y -y "$@" || true ;;
-    apt) $SUDO apt update || true; $SUDO apt install $APT_Y "$@" || true ;;
-    pacman) $SUDO pacman -Sy $PAC_Y "$@" || true ;;
-  esac
-}
-
-remove_native() {
-  case "$PM" in
-    dnf5) $SUDO dnf5 remove -y "$@" || true ;;
-    dnf) $SUDO dnf remove -y "$@" || true ;;
-    apt) $SUDO apt purge -y "$@" || true ;;
-    pacman) $SUDO pacman -Rs $PAC_Y "$@" || true ;;
-  esac
-}
-
-fp_install() {
-  have flatpak || install_native flatpak
-  flatpak remote-add --if-not-exists --system flathub https://flathub.org/repo/flathub.flatpakrepo
-  flatpak install --system -y --noninteractive flathub "$1" || true
-}
-
-fp_remove_if_present() {
-  if have flatpak && flatpak info "$1" >/dev/null 2>&1; then
-    flatpak uninstall --system -y "$1" || true
+# ===== Distro Detect =====
+detect_distro() {
+  if command -v rpm &>/dev/null && command -v dnf &>/dev/null; then
+    PM="dnf"; OS_FAMILY="fedora"
+    OS_ID=$(source /etc/os-release && echo "$ID")
+    OS_VER_ID=$(source /etc/os-release && echo "$VERSION_ID")
+  elif command -v apt-get &>/dev/null; then
+    PM="apt"; OS_FAMILY="debian"
+    OS_ID=$(source /etc/os-release && echo "$ID")
+    OS_VER_ID=$(source /etc/os-release && echo "$VERSION_ID")
+  elif command -v pacman &>/dev/null; then
+    PM="pacman"; OS_FAMILY="arch"
+    OS_ID="arch"; OS_VER_ID=""
+  else
+    log "${RED}Unsupported distro: need dnf/apt/pacman${RESET}"; exit 1
   fi
 }
 
-# Enable repos
-case "$PM" in
-  dnf5)
-    log "Enabling multilib and RPM Fusion (dnf5)…"
-    $SUDO dnf5 install -y dnf5-plugins
-    $SUDO dnf5 config enable fedora-multilib || true
-    $SUDO dnf5 install $DNF_Y -y       https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm       https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
-    ;;
-  dnf)
-    log "Enabling multilib and RPM Fusion (dnf)…"
-    $SUDO dnf install -y dnf-plugins-core
-    $SUDO dnf config-manager --set-enabled fedora-multilib || true
-    $SUDO dnf install $DNF_Y -y       https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm       https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
-    ;;
-  apt)
-    $SUDO add-apt-repository -y multiverse || true
-    $SUDO apt update || true
-    ;;
-  pacman)
-    $SUDO pacman -Sy || true
-    ;;
-esac
-
-# Core apps
-case "$PM" in
-  dnf5|dnf)
-    install_native gamemode mangohud mangohud.i686                    wine wine-mono                    vulkan-loader vulkan-loader.i686                    mesa-dri-drivers mesa-dri-drivers.i686                    mesa-vulkan-drivers mesa-vulkan-drivers.i686                    lutris obs-studio
-    ;;
-  apt)
-    install_native gamemode mangohud                    wine wine64 winetricks                    vulkan-tools mesa-vulkan-drivers                    lutris obs-studio
-    ;;
-  pacman)
-    install_native gamemode mangohud wine winetricks vulkan-tools vulkan-icd-loader lutris obs-studio
-    ;;
-esac
-
-# Flatpak fallback apps
-fp_install com.heroicgameslauncher.hgl
-fp_install com.github.gicmo.goverlay
-fp_install com.obsproject.Studio
-fp_install com.discordapp.Discord
-
-# Proton tools
-[ $WANT_PROTONUPQT -eq 1 ] && fp_install net.davidotek.pupgui2
-[ $WANT_PROTONPLUS -eq 1 ] && [ "$PM" = "dnf5" -o "$PM" = "dnf" ] && $SUDO $PM -y copr enable wehagy/protonplus && install_native protonplus
-
-# Discord cleanup
-if [ "$DISCORD_MODE" = "native" ] || { [ "$DISCORD_MODE" = "auto" ] && [ "$PM" != "apt" ]; }; then
-  install_native discord || fp_install com.discordapp.Discord
-  [ $CLEANUP_DUPES -eq 1 ] && fp_remove_if_present com.discordapp.Discord
-else
-  fp_install com.discordapp.Discord
-  [ $CLEANUP_DUPES -eq 1 ] && remove_native discord
-fi
-
-# Steam (native only, no steam-selinux)
-if [ $SKIP_STEAM -eq 0 ]; then
-  if [ $IS_ARM -eq 1 ]; then
-    warn "ARM architecture — native Steam not available."; exit 1
-  fi
+# ===== Helpers: PM install/remove/query =====
+have_cmd() { command -v "$1" &>/dev/null; }
+is_installed_pkg() {
   case "$PM" in
-    dnf5|dnf) install_native steam steam-devices ;;
-    apt) install_native steam-installer || install_native steam-launcher ;;
-    pacman) install_native steam ;;
+    dnf) rpm -q "$1" &>/dev/null ;;
+    apt) dpkg -s "$1" &>/dev/null ;;
+    pacman) pacman -Q "$1" &>/dev/null ;;
   esac
-  have steam || { warn "Native Steam installation failed — aborting."; exit 1; }
-fi
+}
+pkg_install() {
+  case "$PM" in
+    dnf) run sudo dnf install $(yesflag) "$@" ;;
+    apt) run sudo apt-get update && run sudo apt-get install $(yesflag) "$@" ;;
+    pacman) run sudo pacman -Sy --needed --noconfirm "$@" ;;
+  esac
+}
+pkg_remove() {
+  case "$PM" in
+    dnf) run sudo dnf remove $(yesflag) "$@" ;;
+    apt) run sudo apt-get remove $(yesflag) "$@" ;;
+    pacman) run sudo pacman -Rns --noconfirm "$@" ;;
+  esac
+}
 
-# Safe launcher
-USER_APPS="${HOME}/.local/share/applications"
-SCRIPTS_DIR="${HOME}/scripts"
-WRAPPER="${SCRIPTS_DIR}/steam_safe.sh"
-mkdir -p "${SCRIPTS_DIR}" "${USER_APPS}"
-cat > "${WRAPPER}" <<'EOF'
-#!/usr/bin/env bash
-unset MANGOHUD MANGOHUD_DLSYM ENABLE_VKBASALT VKBASALT_CONFIG_FILE VKBASALT_LOG_FILE
-unset LD_PRELOAD DXVK_HUD __GL_THREADED_OPTIMIZATIONS VK_INSTANCE_LAYERS VK_LAYER_PATH
-unset ENABLE_GAMESCOPE GAMESCOPE GAMESCOPE_* GAMEDEBUG
-export QT_QPA_PLATFORM=xcb
-export SDL_VIDEODRIVER=x11
-[ -f "$HOME/.config/team-nocturnal/overlay.env" ] && . "$HOME/.config/team-nocturnal/overlay.env" || true
-exec steam -no-cef-sandbox -cef-disable-gpu "$@"
+# ===== Repos =====
+enable_repos_fedora() {
+  # RPM Fusion free + nonfree
+  if ! rpm -q rpmfusion-free-release >/dev/null 2>&1; then
+    run sudo dnf install $(yesflag) \
+      "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${OS_VER_ID}.noarch.rpm"
+  fi
+  if ! rpm -q rpmfusion-nonfree-release >/dev/null 2>&1; then
+    run sudo dnf install $(yesflag) \
+      "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${OS_VER_ID}.noarch.rpm"
+  fi
+  run sudo dnf makecache
+}
+
+enable_repos_debian_like() {
+  # Try to ensure common sections where applicable
+  if have_cmd add-apt-repository; then
+    # Ubuntu
+    run sudo add-apt-repository -y universe || true
+    run sudo add-apt-repository -y multiverse || true
+  else
+    # Debian: attempt to enable contrib & non-free components
+    if [ -f /etc/apt/sources.list ]; then
+      if ! grep -Eqi 'non-free|contrib' /etc/apt/sources.list; then
+        run sudo sed -i 's/^deb \(.* main\)$/deb \1 main contrib non-free non-free-firmware/g' /etc/apt/sources.list || true
+      fi
+    fi
+  fi
+  run sudo apt-get update || true
+}
+
+ensure_flatpak() {
+  if ! have_cmd flatpak; then
+    case "$PM" in
+      dnf) pkg_install flatpak ;;
+      apt) pkg_install flatpak ;;
+      pacman) pkg_install flatpak ;;
+    esac
+  fi
+  # Flathub remote
+  if ! flatpak remotes | awk '{print $1}' | grep -qx Flathub; then
+    run sudo flatpak remote-add --if-not-exists Flathub https://flathub.org/repo/flathub.flatpakrepo
+  fi
+}
+
+flatpak_installed() { flatpak list --app | awk '{print $1}' | grep -qx "$1"; }
+flatpak_install() { ensure_flatpak; run sudo flatpak install -y Flathub "$1"; }
+flatpak_remove_if_present() { if flatpak_installed "$1"; then run sudo flatpak uninstall -y "$1"; fi }
+
+# ===== Core Components =====
+install_steam() {
+  case "$OS_FAMILY" in
+    fedora)
+      pkg_install steam
+      ;;
+    debian)
+      # i386 multi-arch for Steam
+      if ! dpkg --print-foreign-architectures | grep -qx i386; then
+        run sudo dpkg --add-architecture i386
+      fi
+      run sudo apt-get update
+      pkg_install steam
+      ;;
+    arch)
+      # Skip on ARM
+      if uname -m | grep -qi 'arm'; then
+        log "${DIM}Skipping Steam on ARM${RESET}"
+      else
+        pkg_install steam
+      fi
+      ;;
+  esac
+}
+
+install_wine_vulkan_gamemode_mangohud() {
+  case "$OS_FAMILY" in
+    fedora)
+      pkg_install wine winetricks vulkan vulkan-tools gamemode mangohud mangohud.i686
+      ;;
+    debian)
+      # Wine, Vulkan loader, tools; i386 where needed
+      if ! dpkg --print-foreign-architectures | grep -qx i386; then
+        run sudo dpkg --add-architecture i386
+        run sudo apt-get update
+      fi
+      pkg_install wine winetricks vulkan-tools mesa-vulkan-drivers mesa-vulkan-drivers:i386 gamemode mangohud
+      ;;
+    arch)
+      pkg_install wine winetricks vulkan-tools gamemode mangohud lib32-mangohud
+      ;;
+  esac
+}
+
+install_lutris() {
+  case "$OS_FAMILY" in
+    fedora|debian|arch) pkg_install lutris || flatpak_install net.lutris.Lutris ;;
+  esac
+  # Remove duplicate if both present: prefer native
+  flatpak_remove_if_present net.lutris.Lutris || true
+}
+
+install_heroic() {
+  case "$OS_FAMILY" in
+    fedora) pkg_install heroic-games-launcher || flatpak_install com.heroicgameslauncher.hgl ;;
+    debian) flatpak_install com.heroicgameslauncher.hgl ;;   # native deb is not always reliable
+    arch)   pkg_install heroic-games-launcher-bin || flatpak_install com.heroicgameslauncher.hgl ;;
+  esac
+  # Prefer native if available
+  if is_installed_pkg heroic-games-launcher || is_installed_pkg heroic-games-launcher-bin; then
+    flatpak_remove_if_present com.heroicgameslauncher.hgl || true
+  fi
+}
+
+# ===== Discord (NATIVE by default with Flatpak fallback) =====
+install_discord_native_or_flatpak() {
+  case "$DISCORD_MODE" in
+    native) _install_discord_native || { log "${DIM}Native Discord not available; falling back to Flatpak...${RESET}"; _install_discord_flatpak; } ;;
+    flatpak) _install_discord_flatpak ;;
+    *) log "${RED}Invalid --discord mode:${RESET} $DISCORD_MODE"; exit 1 ;;
+  esac
+
+  # If native ended up installed, remove Flatpak duplicate; else keep Flatpak.
+  if _discord_native_installed; then
+    flatpak_remove_if_present com.discordapp.Discord || true
+  fi
+}
+
+_discord_native_installed() {
+  case "$OS_FAMILY" in
+    fedora) is_installed_pkg discord ;;
+    debian) is_installed_pkg discord || dpkg -s discord 2>/dev/null | grep -q '^Status: install' ;;
+    arch)   is_installed_pkg discord ;;
+    *) return 1 ;;
+  esac
+}
+
+_install_discord_native() {
+  case "$OS_FAMILY" in
+    fedora)
+      # Requires RPM Fusion nonfree (already enabled earlier)
+      pkg_install discord
+      ;;
+    debian)
+      # Try apt first
+      if pkg_install discord; then
+        :
+      else
+        # Fallback: official .deb
+        TMPD=$(mktemp -d)
+        run bash -c "cd '$TMPD' && wget -O discord.deb 'https://discord.com/api/download?platform=linux&format=deb'"
+        run sudo apt-get install $(yesflag) "./$TMPD/discord.deb" || run sudo apt -y install "./$TMPD/discord.deb"
+        rm -rf "$TMPD"
+      fi
+      ;;
+    arch)
+      pkg_install discord
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+_install_discord_flatpak() {
+  flatpak_install com.discordapp.Discord
+}
+
+# ===== Overlays Presets =====
+configure_overlays() {
+  case "$OVERLAYS_MODE" in
+    none)
+      log "${DIM}Overlay preset: none (no system-wide changes)${RESET}"
+      ;;
+    steam)
+      # Steam-only: Ship a MangoHud config and advise user to toggle per-game in Steam Launch Options
+      _deploy_mangohud_config
+      log "${DIM}Overlay preset: Steam-only (use MANGOHUD=1 in Steam launch options)${RESET}"
+      ;;
+    game)
+      _deploy_mangohud_config
+      _write_per_game_overlay_template
+      ;;
+    *)
+      log "${RED}Invalid --overlays preset:${RESET} $OVERLAYS_MODE"; exit 1
+      ;;
+  esac
+}
+
+_deploy_mangohud_config() {
+  mkdir -p "${HOME}/.config/MangoHud"
+  cat > "${HOME}/.config/MangoHud/MangoHud.conf" <<'EOF'
+fps_limit=0
+cpu_temp
+gpu_temp
+ram
+vram
+gamemode
+gpu_load_change
+frame_timing=1
 EOF
-chmod +x "${WRAPPER}"
-cat > "${USER_APPS}/steam.desktop" <<EOF
-[Desktop Entry]
-Name=Steam
-Comment=Application for managing and playing games
-Exec=/home/${USER}/scripts/steam_safe.sh %U
-Terminal=false
-Type=Application
-Icon=steam
-Categories=Game;
-MimeType=x-scheme-handler/steam;
-StartupNotify=false
+  chown "$(id -u):$(id -g)" "${HOME}/.config/MangoHud/MangoHud.conf" 2>/dev/null || true
+}
+
+_write_per_game_overlay_template() {
+  mkdir -p "${HOME}/Games/Overlay-Templates"
+  cat > "${HOME}/Games/Overlay-Templates/README.txt" <<'EOF'
+Per-game overlay template:
+
+Steam (Properties → Launch Options):
+  MANGOHUD=1 %command%
+
+Non-Steam game launcher (shell):
+  MANGOHUD=1 gamemoderun <your_game_cmd>
+
+Adjust MangoHud config at:
+  ~/.config/MangoHud/MangoHud.conf
 EOF
+}
+
+# ===== Duplicate Cleanup (prefer native) =====
+remove_flatpak_duplicates_if_native() {
+  # Discord
+  if _discord_native_installed; then
+    flatpak_remove_if_present com.discordapp.Discord || true
+  fi
+  # Lutris
+  if is_installed_pkg lutris; then
+    flatpak_remove_if_present net.lutris.Lutris || true
+  fi
+  # Heroic
+  if is_installed_pkg heroic-games-launcher || is_installed_pkg heroic-games-launcher-bin; then
+    flatpak_remove_if_present com.heroicgameslauncher.hgl || true
+  fi
+}
+
+# ===== Main =====
+main() {
+  print_banner
+  detect_distro
+  log "Detected: ${BOLD}${OS_FAMILY}${RESET} (${OS_ID} ${OS_VER_ID})  PM=${PM}"
+  [ "$PM" = "dnf" ] && enable_repos_fedora
+  [ "$PM" = "apt" ] && enable_repos_debian_like
+
+  # Core stack
+  [ "$WANT_STEAM" -eq 1 ] && install_steam
+  [ "$WANT_WINE" -eq 1 ] && install_wine_vulkan_gamemode_mangohud
+  [ "$WANT_LUTRIS" -eq 1 ] && install_lutris
+  [ "$WANT_HEROIC" -eq 1 ] && install_heroic
+
+  # GameMode & MangoHud are part of Wine/Vulkan group above; ensure present if toggled back on
+  if [ "$WANT_GAMEMODE" -eq 1 ]; then
+    case "$OS_FAMILY" in
+      fedora|debian) is_installed_pkg gamemode || pkg_install gamemode ;;
+      arch) is_installed_pkg gamemode || pkg_install gamemode ;;
+    esac
+  fi
+  if [ "$WANT_MANGOHUD" -eq 1 ]; then
+    case "$OS_FAMILY" in
+      fedora) is_installed_pkg mangohud || pkg_install mangohud mangohud.i686 ;;
+      debian) is_installed_pkg mangohud || pkg_install mangohud ;;
+      arch) is_installed_pkg mangohud || pkg_install mangohud lib32-mangohud ;;
+    esac
+  fi
+
+  # Discord (native default with Flatpak fallback)
+  install_discord_native_or_flatpak
+
+  # Overlays preset
+  configure_overlays
+
+  # Remove Flatpak duplicates when native is installed
+  remove_flatpak_duplicates_if_native
+
+  log ""
+  log "${BOLD}Done.${RESET} Reboot is not required, but recommended after large updates."
+}
+
+main "$@"
