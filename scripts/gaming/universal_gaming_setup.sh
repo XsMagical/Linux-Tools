@@ -1,33 +1,40 @@
 #!/usr/bin/env bash
-# Team Nocturnal — Universal Gaming Setup (native Discord by default) by XsMagical
+# Team Nocturnal — Universal Gaming Setup (bundles + native Discord default) by XsMagical
 # Repo: https://github.com/XsMagical/Linux-Tools
 #
 # Summary:
 # - Cross‑distro gaming bootstrap for Fedora/RHEL, Ubuntu/Debian, and Arch/Manjaro.
-# - Prioritizes NATIVE packages over Flatpak (and removes duplicates).
-# - Installs Steam, Proton tooling, Wine + Vulkan bits, MangoHud, GameMode, Lutris, Heroic, etc.
 # - **Discord defaults to native (RPM/DEB/pacman) and only falls back to Flatpak if native is unavailable.**
-# - Safe to re‑run; idempotent installers; detects package manager automatically.
+# - Adds back bundle presets: --bundle=full|gaming|lite|media
+# - Keeps Steam logic exactly as before (unchanged).
+# - Prioritizes native packages over Flatpak and removes duplicates safely.
+# - Idempotent: safe to re-run; detects package manager automatically.
 #
 # Usage (examples):
-#   sudo ~/scripts/universal_gaming_setup.sh
-#   sudo ~/scripts/universal_gaming_setup.sh --overlays=none
-#   sudo ~/scripts/universal_gaming_setup.sh --discord=flatpak     # force Flatpak Discord
-#   sudo ~/scripts/universal_gaming_setup.sh --discord=native      # force native Discord (default)
-#   sudo ~/scripts/universal_gaming_setup.sh --no-heroic --no-lutris
+#   sudo ~/scripts/universal_gaming_setup.sh --bundle=gaming -y
+#   sudo ~/scripts/universal_gaming_setup.sh --bundle=full --overlays=steam
+#   sudo ~/scripts/universal_gaming_setup.sh --bundle=lite --discord=flatpak
+#   sudo ~/scripts/universal_gaming_setup.sh --bundle=media --no-heroic
 #
 # Flags:
-#   --discord=native|flatpak     Choose Discord source (default: native; auto-fallback to Flatpak if needed)
-#   --overlays=none|steam|game   Overlay presets: none (default), Steam-only, or per‑game template
+#   --bundle=full|gaming|lite|media  Install preset (see mapping below)
+#   --discord=native|flatpak         Choose Discord source (default: native; auto‑fallback to Flatpak if needed)
+#   --overlays=none|steam|game       Overlay presets: none (default), Steam-only, or per‑game template
 #   --no-steam|--no-wine|--no-lutris|--no-heroic|--no-gamemode|--no-mangohud
-#   --verbose                    Show commands being run
-#   -y|--assume-yes              Assume yes to package prompts
+#   --verbose                        Show commands being run
+#   -y|--assume-yes                  Assume yes to package prompts
+#
+# Bundle mappings (you can still override with --no-* flags):
+#   lite    : Steam + Discord (minimal), no Wine/Lutris/Heroic, no MangoHud/GameMode
+#   gaming  : Steam + Discord + Wine/Vulkan + MangoHud + GameMode + Lutris (default workhorse)
+#   media   : Steam + Discord + MangoHud + GameMode (skip Wine/Lutris/Heroic by default)
+#   full    : Everything — Steam, Discord, Wine/Vulkan, MangoHud, GameMode, Lutris, Heroic
 #
 # Notes:
 # - Fedora: enables RPM Fusion (free+nonfree) automatically.
 # - Ubuntu/Debian: ensures universe/multiverse (Ubuntu) and contrib/non-free(/non-free-firmware) (Debian) when possible.
 # - Arch: uses pacman; skips Steam on ARM.
-# - Flatpak is used as a fallback when native isn’t available (e.g., Discord on some Debian/Ubuntu setups).
+# - Flatpak is used as a fallback only when native isn’t available.
 
 # ===== Colors =====
 RED="\033[31m"; BLUE="\033[34m"; RESET="\033[0m"; BOLD="\033[1m"; DIM="\033[2m"
@@ -49,12 +56,13 @@ ASSUME_YES=0
 VERBOSE=0
 DISCORD_MODE="native"   # native | flatpak
 OVERLAYS_MODE="none"    # none | steam | game
+BUNDLE="gaming"         # default bundle
 
-# Feature toggles (on by default)
+# Feature toggles (will be set by bundle, can be overridden by --no-* flags)
 WANT_STEAM=1
 WANT_WINE=1
 WANT_LUTRIS=1
-WANT_HEROIC=1
+WANT_HEROIC=0
 WANT_GAMEMODE=1
 WANT_MANGOHUD=1
 
@@ -64,7 +72,61 @@ log() { printf '%b\n' "$*"; }
 run() { if [ "$VERBOSE" -eq 1 ]; then set -x; fi; "$@"; local rc=$?; if [ "$VERBOSE" -eq 1 ]; then set +x; fi; return $rc; }
 yesflag() { [ "$ASSUME_YES" -eq 1 ] && echo "-y" || echo ""; }
 
-# ===== Arg Parse =====
+# ===== Arg Parse (capture bundle first, then apply overrides) =====
+RAW_ARGS=("$@")
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --bundle=*) BUNDLE="${1#*=}" ;;
+  esac
+  shift
+done
+
+# Apply bundle → toggles
+apply_bundle() {
+  case "$BUNDLE" in
+    lite)
+      WANT_STEAM=1
+      WANT_WINE=0
+      WANT_LUTRIS=0
+      WANT_HEROIC=0
+      WANT_GAMEMODE=0
+      WANT_MANGOHUD=0
+      ;;
+    gaming)
+      WANT_STEAM=1
+      WANT_WINE=1
+      WANT_LUTRIS=1
+      WANT_HEROIC=0
+      WANT_GAMEMODE=1
+      WANT_MANGOHUD=1
+      ;;
+    media)
+      WANT_STEAM=1
+      WANT_WINE=0
+      WANT_LUTRIS=0
+      WANT_HEROIC=0
+      WANT_GAMEMODE=1
+      WANT_MANGOHUD=1
+      ;;
+    full)
+      WANT_STEAM=1
+      WANT_WINE=1
+      WANT_LUTRIS=1
+      WANT_HEROIC=1
+      WANT_GAMEMODE=1
+      WANT_MANGOHUD=1
+      ;;
+    *)
+      log "${RED}Unknown bundle:${RESET} $BUNDLE"
+      exit 1
+      ;;
+  esac
+}
+
+apply_bundle
+
+# Re-run parse to allow manual overrides AFTER bundle selection
+set -- "${RAW_ARGS[@]}"
 while [ $# -gt 0 ]; do
   case "$1" in
     --verbose) VERBOSE=1 ;;
@@ -77,6 +139,7 @@ while [ $# -gt 0 ]; do
     --no-heroic) WANT_HEROIC=0 ;;
     --no-gamemode) WANT_GAMEMODE=0 ;;
     --no-mangohud) WANT_MANGOHUD=0 ;;
+    --bundle=*) ;;  # already handled
     *) log "${RED}Unknown flag:${RESET} $1"; exit 1 ;;
   esac
   shift
@@ -141,7 +204,6 @@ enable_repos_fedora() {
 enable_repos_debian_like() {
   # Try to ensure common sections where applicable
   if have_cmd add-apt-repository; then
-    # Ubuntu
     run sudo add-apt-repository -y universe || true
     run sudo add-apt-repository -y multiverse || true
   else
@@ -158,9 +220,7 @@ enable_repos_debian_like() {
 ensure_flatpak() {
   if ! have_cmd flatpak; then
     case "$PM" in
-      dnf) pkg_install flatpak ;;
-      apt) pkg_install flatpak ;;
-      pacman) pkg_install flatpak ;;
+      dnf|apt|pacman) pkg_install flatpak ;;
     esac
   fi
   # Flathub remote
@@ -173,7 +233,7 @@ flatpak_installed() { flatpak list --app | awk '{print $1}' | grep -qx "$1"; }
 flatpak_install() { ensure_flatpak; run sudo flatpak install -y Flathub "$1"; }
 flatpak_remove_if_present() { if flatpak_installed "$1"; then run sudo flatpak uninstall -y "$1"; fi }
 
-# ===== Core Components =====
+# ===== Core Components (Steam kept as-is) =====
 install_steam() {
   case "$OS_FAMILY" in
     fedora)
@@ -367,26 +427,21 @@ main() {
   [ "$PM" = "dnf" ] && enable_repos_fedora
   [ "$PM" = "apt" ] && enable_repos_debian_like
 
-  # Core stack
-  [ "$WANT_STEAM" -eq 1 ] && install_steam
-  [ "$WANT_WINE" -eq 1 ] && install_wine_vulkan_gamemode_mangohud
-  [ "$WANT_LUTRIS" -eq 1 ] && install_lutris
-  [ "$WANT_HEROIC" -eq 1 ] && install_heroic
+  # Core installs based on bundle/toggles
+  if [ "$WANT_STEAM" -eq 1 ]; then
+    install_steam   # kept as-is per request
+  else
+    log "${DIM}Skipping Steam per flags/bundle${RESET}"
+  fi
 
-  # GameMode & MangoHud are part of Wine/Vulkan group above; ensure present if toggled back on
-  if [ "$WANT_GAMEMODE" -eq 1 ]; then
-    case "$OS_FAMILY" in
-      fedora|debian) is_installed_pkg gamemode || pkg_install gamemode ;;
-      arch) is_installed_pkg gamemode || pkg_install gamemode ;;
-    esac
+  if [ "$WANT_WINE" -eq 1 ] || [ "$WANT_GAMEMODE" -eq 1 ] || [ "$WANT_MANGOHUD" -eq 1 ]; then
+    install_wine_vulkan_gamemode_mangohud
+  else
+    log "${DIM}Skipping Wine/Vulkan/GameMode/MangoHud per flags/bundle${RESET}"
   fi
-  if [ "$WANT_MANGOHUD" -eq 1 ]; then
-    case "$OS_FAMILY" in
-      fedora) is_installed_pkg mangohud || pkg_install mangohud mangohud.i686 ;;
-      debian) is_installed_pkg mangohud || pkg_install mangohud ;;
-      arch) is_installed_pkg mangohud || pkg_install mangohud lib32-mangohud ;;
-    esac
-  fi
+
+  [ "$WANT_LUTRIS" -eq 1 ] && install_lutris || log "${DIM}Skipping Lutris per flags/bundle${RESET}"
+  [ "$WANT_HEROIC" -eq 1 ] && install_heroic || log "${DIM}Skipping Heroic per flags/bundle${RESET}"
 
   # Discord (native default with Flatpak fallback)
   install_discord_native_or_flatpak
@@ -398,7 +453,7 @@ main() {
   remove_flatpak_duplicates_if_native
 
   log ""
-  log "${BOLD}Done.${RESET} Reboot is not required, but recommended after large updates."
+  log "${BOLD}Done.${RESET} Bundle=${BUNDLE}. Reboot is not required, but recommended after large updates."
 }
 
 main "$@"
