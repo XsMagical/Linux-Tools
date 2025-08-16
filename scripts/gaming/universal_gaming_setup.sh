@@ -126,6 +126,33 @@ pm_refresh_repos(){
   esac
 }
 
+# ===== Update counts (approx) =====
+pm_count_updates_available(){
+  local pm; pm="$(pm_detect)"
+  case "$pm" in
+    dnf)
+      # dnf returns 100 when updates available; parse lines that look like pkgs
+      local out; out="$(dnf -q check-update || true)"
+      # Filter lines that look like "name.arch  version  repo"
+      echo "$out" | awk 'NF>=3 && $1 !~ /^Last/ && $1 !~ /^Obsoleting/ && $1 !~ /^Security/ && $1 !~ /^Bugfix/ && $1 !~ /^Enhancement/ && $1 !~ /^New package/ {c++} END{print c+0}'
+      ;;
+    zypper)
+      local out; out="$(zypper -n lu || true)"
+      # Lines with "v |" mean available updates
+      echo "$out" | awk -F'|' '$1 ~ /v/ {c++} END{print c+0}'
+      ;;
+    apt)
+      apt list --upgradeable 2>/dev/null | tail -n +2 | wc -l
+      ;;
+    pacman)
+      pacman -Sup 2>/dev/null | grep -Ev '^(::|warning:|error:|$)' | wc -l
+      ;;
+    *)
+      echo 0
+      ;;
+  esac
+}
+
 # ===== Install wrapper =====
 pm_install(){
   local pkgs=("$@")
@@ -205,11 +232,16 @@ setup_repos(){
 # ===== System UPGRADE =====
 pm_update_full(){
   local pm; pm="$(pm_detect)"
+  local avail; avail="$(pm_count_updates_available || echo 0)"
   case "$pm" in
     zypper)
       [[ "$AGREE_PK" == "true" ]] && pkill -9 packagekitd 2>/dev/null || true
       if sudo zypper -n up -y; then
-        record_status "system-upgrade (zypper)" "${ICON_OK}" "zypper up completed"
+        if [[ "${avail:-0}" -gt 0 ]]; then
+          record_status "system-upgrade (zypper)" "${ICON_OK}" "Upgraded ${avail} package(s)"
+        else
+          record_status "system-upgrade (zypper)" "${ICON_PRESENT}" "Already up to date"
+        fi
         return 0
       else
         record_status "system-upgrade (zypper)" "${ICON_ERR}" "zypper up failed"
@@ -218,7 +250,11 @@ pm_update_full(){
       ;;
     dnf)
       if sudo dnf -y upgrade --refresh; then
-        record_status "system-upgrade (dnf)" "${ICON_OK}" "dnf upgrade --refresh completed"
+        if [[ "${avail:-0}" -gt 0 ]]; then
+          record_status "system-upgrade (dnf)" "${ICON_OK}" "Upgraded ${avail} package(s)"
+        else
+          record_status "system-upgrade (dnf)" "${ICON_PRESENT}" "Already up to date"
+        fi
         return 0
       else
         record_status "system-upgrade (dnf)" "${ICON_ERR}" "dnf upgrade failed"
@@ -227,7 +263,11 @@ pm_update_full(){
       ;;
     apt)
       if sudo apt-get dist-upgrade -y; then
-        record_status "system-upgrade (apt)" "${ICON_OK}" "dist-upgrade completed"
+        if [[ "${avail:-0}" -gt 0 ]]; then
+          record_status "system-upgrade (apt)" "${ICON_OK}" "Upgraded ${avail} package(s)"
+        else
+          record_status "system-upgrade (apt)" "${ICON_PRESENT}" "Already up to date"
+        fi
         return 0
       else
         record_status "system-upgrade (apt)" "${ICON_ERR}" "dist-upgrade failed"
@@ -236,7 +276,11 @@ pm_update_full(){
       ;;
     pacman)
       if sudo pacman -Syu --noconfirm; then
-        record_status "system-upgrade (pacman)" "${ICON_OK}" "pacman -Syu completed"
+        if [[ "${avail:-0}" -gt 0 ]]; then
+          record_status "system-upgrade (pacman)" "${ICON_OK}" "Upgraded ${avail} package(s)"
+        else
+          record_status "system-upgrade (pacman)" "${ICON_PRESENT}" "Already up to date"
+        fi
         return 0
       else
         record_status "system-upgrade (pacman)" "${ICON_ERR}" "pacman -Syu failed"
@@ -333,7 +377,6 @@ detect_proton_versions(){
     if [[ -d "$p" ]]; then
       while IFS= read -r -d '' d; do
         base="$(basename "$d")"
-        # Heuristic: match Proton/GE style names
         if [[ "$base" =~ [Pp]roton || "$base" =~ GE-?[Pp]roton ]]; then
           found+=("$base")
         fi
@@ -344,14 +387,13 @@ detect_proton_versions(){
   if ((${#found[@]}==0)); then
     record_status "Proton versions" "${ICON_PRESENT}" "None detected in compatibilitytools.d"
   else
-    # Deduplicate & sort
     mapfile -t uniq < <(printf "%s\n" "${found[@]}" | sort -u)
-    # Limit display to keep summary tidy
+    local count="${#uniq[@]}"
     local show="$(printf "%s, " "${uniq[@]}")"; show="${show%, }"
     if ((${#show} > 120)); then
-      # truncate long list
-      local count="${#uniq[@]}"
       show="$(printf "%s, %s, %s, … (total %d)" "${uniq[0]}" "${uniq[1]}" "${uniq[2]}" "$count")"
+    else
+      show="$(printf "%s (total %d)" "$show" "$count")"
     fi
     record_status "Proton versions" "${ICON_PRESENT}" "$show"
   fi
@@ -390,7 +432,15 @@ install_kernel_extras(){
         record_status "v4l2loopback" "${ICON_ERR}" "Install failed"
       fi
       ;;
-    dnf|apt|pacman)
+    dnf)
+      # Try akmod (RPM Fusion) first, fallback to kmod if available
+      if pm_install akmod-v4l2loopback || pm_install kmod-v4l2loopback; then
+        record_status "v4l2loopback" "${ICON_OK}" "akmod/kmod installed (reboot may be required)"
+      else
+        record_status "v4l2loopback" "${ICON_ERR}" "Install failed"
+      fi
+      ;;
+    apt|pacman)
       record_status "v4l2loopback" "${ICON_PRESENT}" "Not configured on this distro by default"
       ;;
   esac
@@ -398,8 +448,21 @@ install_kernel_extras(){
 
 # ===== GameMode & MangoHud =====
 configure_gamemode(){
+  local active="unknown"
+  if have systemctl; then
+    if as_user systemctl --user is-active gamemoded >/dev/null 2>&1; then
+      active="active (user)"
+    elif systemctl is-active gamemoded >/dev/null 2>&1; then
+      active="active (system)"
+    else
+      active="inactive"
+    fi
+  elif pgrep -x gamemoded >/dev/null 2>&1; then
+    active="running (pgrep)"
+  fi
+
   if have gamemoded; then
-    record_status "GameMode" "${ICON_PRESENT}" "Daemon available"
+    record_status "GameMode" "${ICON_PRESENT}" "Daemon available; status: ${active}"
   else
     record_status "GameMode" "${ICON_ERR}" "Daemon not found"
   fi
@@ -440,7 +503,7 @@ pm_refresh_repos
 setup_repos
 pm_refresh_repos
 
-# 3) System upgrade (unless skipped)
+# 3) System upgrade (unless skipped) with count
 if [[ "$SKIP_UPGRADE" == "false" ]]; then
   pm_update_full || true
 else
@@ -465,7 +528,7 @@ else
   configure_mangohud
 fi
 
-# 5) Proton detection (managers + versions)
+# 5) Proton detection (managers + versions + count)
 detect_proton_versions
 
 echo
