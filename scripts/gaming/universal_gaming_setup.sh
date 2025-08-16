@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ===== Colors =====
-RED="\033[31m"; BLUE="\033[34m"; RESET="\033[0m"; BOLD="\033[1m"; DIM="\033[2m"
+# ================= Colors & Symbols =================
+RED="\033[31m"; BLUE="\033[34m"; GREEN="\033[32m"; YELLOW="\033[33m"; RESET="\033[0m"
+BOLD="\033[1m"
+OK="✅"           # freshly installed
+PRESENT="🟦"      # already present
+SKIP="⚪"         # skipped (not requested / not needed)
+ERR="❌"          # error
 
+# ================= Banner =================
 print_banner() {
   printf '%b\n' "${RED}████████╗███╗   ██╗${RESET}"
   printf '%b\n' "${RED}╚══██╔══╝████╗  ██║${RESET}"
@@ -16,462 +22,255 @@ print_banner() {
   printf '%b\n' "${BLUE}----------------------------------------------------------${RESET}"
 }
 
-# ------------------------
-# Defaults & CLI
-# ------------------------
-ASSUME_YES=0
+# ================= Args & Logging =================
 BUNDLE="full"
-OVERLAYS="${OVERLAYS:-none}"
-LOG_DIR="${HOME}/scripts/logs"
-AUTOLOG=1            # default: log is ON
-AGREE_PACKAGEKIT_QUIT=0  # new flag for openSUSE lock handling
-
-usage() {
-  cat <<'EOF'
-Usage: universal_gaming_setup.sh [options]
-
-Options:
-  --bundle=<core|qol|wine|apps|full>  Select what to install (default: full)
-  --overlays=<none|system|user>       Configure MangoHud/GameMode overlays (default: none)
-  -y, --yes                           Non-interactive mode (assume yes)
-  --no-log                            Disable automatic logging
-  --autolog                           Force logging on (default already on)
-  --agree-pk                          On openSUSE, automatically release PackageKit lock (safe)
-  -h, --help                          Show this help
-
-Examples:
-  ./universal_gaming_setup.sh --bundle=full -y
-  ./universal_gaming_setup.sh --bundle=apps --overlays=user
-EOF
-}
+AGREE_PK="false"
+AUTOLOG="true"
 
 for arg in "$@"; do
   case "$arg" in
     --bundle=*) BUNDLE="${arg#*=}";;
-    --overlays=*) OVERLAYS="${arg#*=}";;
-    -y|--yes) ASSUME_YES=1;;
-    --no-log) AUTOLOG=0;;
-    --autolog) AUTOLOG=1;;
-    --agree-pk) AGREE_PACKAGEKIT_QUIT=1;;
-    -h|--help) usage; exit 0;;
-    *) ;;
+    --agree-pk) AGREE_PK="true";;
+    --autolog)  AUTOLOG="true";;
+    -y|--yes)   : ;;   # accepted for compatibility
+    *) : ;;
   esac
 done
 
-YN_FLAG=()
-if [[ $ASSUME_YES -eq 1 ]]; then
-  YN_FLAG=(-y)
-fi
+# Prepare logging to USER folder, even when running via sudo
+REAL_HOME="${SUDO_USER:+$(getent passwd "$SUDO_USER" | cut -d: -f6)}"
+REAL_HOME="${REAL_HOME:-$HOME}"
+LOG_DIR="${REAL_HOME}/scripts/logs"
+mkdir -p "$LOG_DIR"
+LOG_FILE="${LOG_DIR}/gaming_$(date +%Y%m%d_%H%M%S).log"
 
-# ------------------------
-# Auto log (default ON)
-# ------------------------
-maybe_start_logging() {
-  if [[ ${AUTOLOG} -eq 1 && -t 1 ]]; then
-    mkdir -p "${LOG_DIR}" || true
-    ts="$(date +%Y%m%d_%H%M%S)"
-    logf="${LOG_DIR}/gaming_${ts}.log"
-    echo "Logging to: ${logf}"
-    # restart script with tee capturing output; avoid recursion
-    if [[ -z "${TN_LOGGING_ALREADY:-}" ]]; then
-      export TN_LOGGING_ALREADY=1
-      # exec to preserve exit code
-      exec bash -c '"$0" "$@" 2>&1 | tee -a "$1"' bash "$0" "$@" "$logf"
-    fi
-  fi
-}
-
-# If the last arg looks like a log file path from our re-exec, skip starting again.
-if [[ "${@: -1}" != *.log ]]; then
-  maybe_start_logging "$@"
-fi
-
+# Start tee only now (after parsing so args don't leak into log as commands)
+exec > >(tee -a "$LOG_FILE") 2>&1
 print_banner
+echo "Logging to: $LOG_FILE"
 
-# Detect OS
-OS_ID=""; OS_ID_LIKE=""
-if [[ -f /etc/os-release ]]; then
-  # shellcheck disable=SC1091
-  source /etc/os-release
-  OS_ID="${ID:-}"
-  OS_ID_LIKE="${ID_LIKE:-}"
-fi
-
-is_like() { echo "$OS_ID $OS_ID_LIKE" | grep -qiE "$1"; }
-
-# ------------------------
-# Helpers per distro
-# ------------------------
-suse_release_pkgkit_lock() {
-  if is_like 'suse|opensuse'; then
-    if [[ "${ASSUME_YES}" -eq 1 || "${AGREE_PACKAGEKIT_QUIT}" -eq 1 ]]; then
-      echo "==> openSUSE: Releasing PackageKit lock (non-interactive)"
-      pkcon quit >/dev/null 2>&1 || true
-      systemctl stop packagekit.service >/dev/null 2>&1 || true
-      killall -q packagekitd >/dev/null 2>&1 || true
-    else
-      echo "==> openSUSE: PackageKit may lock zypper. Re-run with --agree-pk or -y to auto-quit it."
-    fi
-  fi
-}
-
-suse_zypper() {
-  suse_release_pkgkit_lock
-  zypper --non-interactive "${YN_FLAG[@]}" "$@"
-}
-
-# Repo refresh / enablement
-ensure_repos_suse() {
-  echo "==> openSUSE: Ensuring Packman & refreshing repositories"
-  suse_zypper refresh || true
-
-  # Ensure Packman present (OSS/Non-OSS already present by default on TW)
-  if ! zypper lr | grep -qi '^packman'; then
-    suse_zypper addrepo --refresh --priority 90 --check \
-      --name packman https://ftp.gwdg.de/pub/linux/misc/packman/suse/openSUSE_Tumbleweed/ packman || true
-  fi
-
-  # Refresh again; ignore occasional mirror hiccups
-  suse_zypper refresh || true
-
-  # Safe dup to align vendor (no-op if fine)
-  suse_zypper --no-refresh dup --allow-vendor-change || true
-}
-
-install_core_suse() {
-  echo "==> Installing core gaming packages (Steam, Lutris, Wine, Vulkan, etc.)"
-  suse_zypper refresh || true
-
-  # 32-bit GL/Vulkan + tools
-  suse_zypper install \
-    Mesa-libGL1-32bit libvulkan1-32bit vulkan-tools vulkan-validationlayers || true
-
-  # QoL
-  suse_zypper install \
-    gamemode libgamemode0 libgamemodeauto0-32bit mangohud mangohud-32bit gamescope || true
-
-  # Wine stack
-  suse_zypper install wine wine-32bit winetricks || true
-
-  # Apps
-  suse_zypper install steam lutris discord obs-studio || true
-
-  # Kernel extras (optional; they exist on TW)
-  suse_zypper install kernel-default-devel v4l2loopback-kmp-default || true
-}
-
-install_goverlay_suse() {
-  echo "==> Installing GOverlay (native)"
-  # Avoid broken games:tools repo; install from OSS (goverlay + vkbasalt live in main repo)
-  suse_zypper install goverlay vkbasalt Mesa-demo || true
-}
-
-# Flatpak helpers
-ensure_flatpak() {
-  if ! command -v flatpak >/dev/null 2>&1; then
-    if is_like 'suse|opensuse'; then
-      suse_zypper install flatpak || true
-    elif is_like 'fedora|rhel|centos'; then
-      sudo dnf install -y flatpak || true
-    elif is_like 'debian|ubuntu'; then
-      sudo apt-get update -y || true
-      sudo apt-get install -y flatpak || true
-    elif is_like 'arch'; then
-      sudo pacman -S --noconfirm flatpak || true
-    fi
-  fi
-
-  # Add flathub for both system and user scopes (idempotent)
-  flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo >/dev/null 2>&1 || true
-  flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo >/dev/null 2>&1 || true
-}
-
-install_flatpak_apps() {
-  ensure_flatpak
-
-  # ProtonUp-Qt (user scope)
-  echo "==> Installing ProtonUp-Qt (Flatpak, user scope)"
-  flatpak install -y --user flathub net.davidotek.pupgui2 || true
-
-  # Heroic (system scope, but fallback to user if system fails)
-  echo "==> Installing Heroic (Flatpak)"
-  if ! flatpak install -y flathub com.heroicgameslauncher.hgl; then
-    flatpak install -y --user flathub com.heroicgameslauncher.hgl || true
-  fi
-
-  # ProtonPlus (user scope)
-  echo "==> Installing ProtonPlus (Flatpak, user scope)"
-  flatpak install -y --user flathub com.vysp3r.ProtonPlus || true
-}
-
-# Overlays config
-configure_overlays() {
-  echo "==> Overlays: ${OVERLAYS}"
-  mkdir -p "${HOME}/.config/MangoHud" "${HOME}/.config" || true
-
-  # Simple MangoHud default
-  MH_CFG="${HOME}/.config/MangoHud/MangoHud.conf"
-  if [[ ! -s "${MH_CFG}" ]]; then
-    cat > "${MH_CFG}" <<'EOC'
-fps
-frametime
-gpu_stats
-cpu_stats
-vram
-ram
-vulkan_driver
-full
-EOC
-    echo "==> MangoHud config created"
-  else
-    echo "==> MangoHud config already exists"
-  fi
-
-  # GameMode config stub
-  GM_CFG="${HOME}/.config/gamemode.ini"
-  if [[ ! -s "${GM_CFG}" ]]; then
-    cat > "${GM_CFG}" <<'EOG'
-[general]
-renice=10
-[easyanti-cheat]
-enabled=auto
-EOG
-    echo "==> GameMode config created"
-  else
-    echo "==> GameMode config already exists"
-  fi
-
-  case "${OVERLAYS}" in
-    system)
-      # No systemwide changes on openSUSE by default (keep conservative)
-      ;;
-    user|none|*)
-      ;;
-  esac
-}
-
-# ------------------------
-# Distro dispatch
-# ------------------------
-install_core_fedora() {
-  sudo dnf -y groupinstall "Development Tools" >/dev/null 2>&1 || true
-  sudo dnf -y install steam lutris mangohud gamemode gamescope wine winetricks \
-    vulkan-tools vulkan-validation-layers discord obs-studio || true
-}
-
-install_core_debian() {
-  sudo apt-get update -y || true
-  sudo apt-get install -y steam lutris mangohud gamemode gamescope wine winetricks \
-    vulkan-tools vulkan-validationlayers obs-studio || true
-  # Discord: snap/flatpak/manual; we won’t force here to keep prior behavior
-}
-
-install_core_arch() {
-  sudo pacman -Syu --noconfirm || true
-  sudo pacman -S --noconfirm steam lutris mangohud gamemode gamescope wine winetricks \
-    vulkan-tools vulkan-validation-layers obs-studio || true
-  # Discord from repo is 'discord'
-  sudo pacman -S --noconfirm discord || true
-}
-
-do_install() {
-  if is_like 'suse|opensuse'; then
-    ensure_repos_suse
-    case "${BUNDLE}" in
-      core) install_core_suse ;;
-      qol)  suse_zypper install mangohud gamemode gamescope || true ;;
-      wine) suse_zypper install wine wine-32bit winetricks || true ;;
-      apps) suse_zypper install steam lutris discord obs-studio || true ;;
-      full|*) install_core_suse ;;
-    esac
-
-    # Proton tools + Heroic
-    install_flatpak_apps
-
-    # GOverlay native
-    install_goverlay_suse
-
-    # Overlays
-    configure_overlays
-
-  elif is_like 'fedora|rhel|centos'; then
-    case "${BUNDLE}" in
-      core) install_core_fedora ;;
-      full|*) install_core_fedora ;;
-      qol)  sudo dnf install -y mangohud gamemode gamescope || true ;;
-      wine) sudo dnf install -y wine winetricks || true ;;
-      apps) sudo dnf install -y steam lutris discord obs-studio || true ;;
-    esac
-    install_flatpak_apps
-    configure_overlays
-
-  elif is_like 'debian|ubuntu'; then
-    case "${BUNDLE}" in
-      core) install_core_debian ;;
-      full|*) install_core_debian ;;
-      qol)  sudo apt-get install -y mangohud gamemode gamescope || true ;;
-      wine) sudo apt-get install -y wine winetricks || true ;;
-      apps) sudo apt-get install -y steam lutris obs-studio || true ;;
-    esac
-    install_flatpak_apps
-    configure_overlays
-
-  elif is_like 'arch'; then
-    case "${BUNDLE}" in
-      core) install_core_arch ;;
-      full|*) install_core_arch ;;
-      qol)  sudo pacman -S --noconfirm mangohud gamemode gamescope || true ;;
-      wine) sudo pacman -S --noconfirm wine winetricks || true ;;
-      apps) sudo pacman -S --noconfirm steam lutris discord obs-studio || true ;;
-    esac
-    install_flatpak_apps
-    configure_overlays
-
-  else
-    echo "Unsupported distro (need dnf/apt/pacman/zypper)."
-    exit 1
-  fi
-}
-
-# ------------------------
-# Run
-# ------------------------
-do_install
-
-# ------------------------
-# Summary
-# ------------------------
-echo "----------------------------------------------------------"
-echo " Install Status Summary"
-echo "----------------------------------------------------------"
+# ================= Helpers =================
 have() { command -v "$1" >/dev/null 2>&1; }
 
-# Basics
-have steam && echo "✅ steam: Present" || echo "❌ steam: Missing"
-have lutris && echo "✅ lutris: Present" || echo "❌ lutris: Missing"
-have gamescope && echo "✅ gamescope: Present" || echo "❌ gamescope: Missing"
-have mangohud && echo "✅ mangohud: Present" || echo "❌ mangohud: Missing"
-have vulkaninfo && echo "✅ vulkaninfo: Present" || echo "❌ vulkaninfo: Missing"
-have gamemoded && echo "✅ gamemoded: Present" || echo "❌ gamemoded: Missing"
-have wine && echo "✅ wine: Present" || echo "❌ wine: Missing"
-have winetricks && echo "✅ winetricks: Present" || echo "❌ winetricks: Missing"
-have obs && echo "✅ obs: Present" || echo "❌ obs: Missing"
-have discord && echo "✅ discord: Present" || echo "❌ discord: Missing"
-
-# Proton tools
-if command -v flatpak >/dev/null 2>&1; then
-  if flatpak info --user net.davidotek.pupgui2 >/dev/null 2>&1 || flatpak info net.davidotek.pupgui2 >/dev/null 2>&1; then
-    echo "✅ ProtonUp-Qt (Flatpak): Present"
-  else
-    echo "❌ ProtonUp-Qt (Flatpak): Missing"
-  fi
-  if flatpak info --user com.vysp3r.ProtonPlus >/dev/null 2>&1 || flatpak info com.vysp3r.ProtonPlus >/dev/null 2>&1; then
-    echo "✅ ProtonPlus (Flatpak): Present"
-  else
-    echo "❌ ProtonPlus (Flatpak): Missing"
-  fi
+# Prompt once for sudo at the beginning (unless running as root)
+if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+  echo -e "${BLUE}==> Elevation: requesting admin privileges once (sudo -v)...${RESET}"
+  sudo -v
+  # keep alive while the script runs
+  ( while true; do sudo -n true; sleep 30; done ) >/dev/null 2>&1 &
+  SUDO_KEEPALIVE_PID=$!
+  trap 'kill "$SUDO_KEEPALIVE_PID" >/dev/null 2>&1 || true' EXIT
 else
-  echo "❌ ProtonUp-Qt/ProtonPlus: Flatpak not available"
+  echo -e "${BLUE}==> Running as root; no sudo prompt needed.${RESET}"
 fi
 
-# GOverlay
-if have goverlay; then
-  echo "✅ GOverlay: Present"
-else
-  if command -v flatpak >/dev/null 2>&1 && flatpak info com.github.benjamimgois.goverlay >/dev/null 2>&1; then
-    echo "✅ GOverlay (Flatpak): Present"
-  else
-    echo "❌ GOverlay: Missing"
+agree_pkgkit_if_needed() {
+  if [[ "$AGREE_PK" == "true" ]] && have pkcon; then
+    pkcon quit >/dev/null 2>&1 || true
+    sleep 1
   fi
-fi
+}
 
-# v4l2loopback (module availability may lag behind newest kernels)
-if lsmod | grep -q '^v4l2loopback'; then
-  echo "✅ v4l2loopback: Loaded"
-elif modinfo v4l2loopback >/dev/null 2>&1; then
-  echo "✅ v4l2loopback: Present"
-else
-  echo "⚠ v4l2loopback: Not available for running kernel build yet"
-fi
+# Status tracking
+declare -A STATUS
+set_status() { # name code detail
+  local name="$1" code="$2" detail="${3:-}"
+  STATUS["$name"]="$code${detail:+|$detail}"
+}
 
-# Final log line if logging
-if [[ "${@: -1}" == *"/gaming_"*".log" ]]; then
+print_status_line() {
+  local name="$1" value="${STATUS[$1]:-}"
+  local code="${value%%|*}"; local detail=""; [[ "$value" == *"|"* ]] && detail="${value#*|}"
+  local icon label
+  case "$code" in
+    ok)     icon="$OK";     label="Installed";;
+    present)icon="$PRESENT";label="Already present";;
+    skip)   icon="$SKIP";   label="Skipped";;
+    err)    icon="$ERR";    label="Error";;
+    *)      icon="$SKIP";   label="Unknown";;
+  esac
+  if [[ -n "$detail" ]]; then
+    printf " %s %-14s %s (%s)\n" "$icon" "$name:" "$label" "$detail"
+  else
+    printf " %s %-14s %s\n" "$icon" "$name:" "$label"
+  fi
+}
+
+print_summary() {
   echo "----------------------------------------------------------"
-  echo "Log saved to: ${@: -1}"
+  echo " Install Status Summary"
+  echo "----------------------------------------------------------"
+  for item in steam lutris gamescope mangohud vulkaninfo gamemoded wine winetricks obs discord \
+              "ProtonUp-Qt" "ProtonPlus" "Heroic" GOverlay v4l2loopback; do
+    print_status_line "$item"
+  done
+  echo "----------------------------------------------------------"
+  echo "Tips:"
+  echo "- ProtonUp-Qt: flatpak run net.davidotek.pupgui2"
+  echo "- ProtonPlus : flatpak run com.vysp3r.ProtonPlus"
+  echo "- Heroic     : flatpak run com.heroicgameslauncher.hgl"
+  echo ""
+  echo "If PackageKit causes locks, add --agree-pk to auto-release the lock."
+  echo "Log saved to: $LOG_FILE"
+  echo "Done."
+}
+
+# Distro detect
+detect_pkg() {
+  if have zypper; then echo suse; return; fi
+  if have apt-get; then echo ubuntu; return; fi
+  if have dnf; then echo fedora; return; fi
+  if have pacman; then echo arch; return; fi
+  echo none
+}
+
+release_pkgkit_lock() {
+  agree_pkgkit_if_needed
+}
+
+# ================= Per-distro installers =================
+suse_refresh() {
+  echo -e "${BLUE}==> openSUSE: Ensuring Packman & refreshing repositories${RESET}"
+  release_pkgkit_lock
+  if ! zypper lr | grep -q '^packman'; then
+    sudo zypper -n ar -cfp 90 https://ftp.gwdg.de/pub/linux/misc/packman/suse/openSUSE_Tumbleweed/ packman || true
+  fi
+  sudo zypper -n ref || true
+}
+
+suse_install_native() {
+  # Core
+  echo -e "${BLUE}==> Installing core gaming packages (Steam, Lutris, Wine, Vulkan, etc.)${RESET}"
+  release_pkgkit_lock
+  if sudo zypper -n in -l -y \
+      Mesa-libGL1-32bit libvulkan1-32bit vulkan-tools vulkan-validationlayers \
+      gamemode libgamemode0 libgamemodeauto0-32bit mangohud mangohud-32bit \
+      steam lutris gamescope; then
+    set_status steam present; set_status lutris present; set_status gamescope present
+    set_status mangohud present; set_status vulkaninfo present; set_status gamemoded present
+  else
+    set_status steam err "zypper"; set_status lutris err "zypper"; set_status gamescope err "zypper"
+    set_status mangohud err "zypper"; set_status vulkaninfo err "zypper"; set_status gamemoded err "zypper"
+  fi
+
+  # QoL
+  echo -e "${BLUE}==> Installing QoL apps (Discord, OBS, GOverlay native)${RESET}"
+  if sudo zypper -n in -l -y discord obs-studio goverlay vkbasalt Mesa-demo; then
+    set_status obs present; set_status discord present; set_status GOverlay present
+  else
+    set_status obs err "zypper"; set_status discord err "zypper"; set_status GOverlay err "zypper"
+  fi
+
+  # Wine
+  echo -e "${BLUE}==> Installing Wine + Winetricks${RESET}"
+  if sudo zypper -n in -l -y wine wine-32bit winetricks; then
+    set_status wine present; set_status winetricks present
+  else
+    set_status wine err "zypper"; set_status winetricks err "zypper"
+  fi
+
+  # Kernel extras
+  echo -e "${BLUE}==> Installing optional kernel extras (v4l2loopback KMP)${RESET}"
+  if sudo zypper -n in -l -y kernel-default-devel v4l2loopback-kmp-default; then
+    if modinfo v4l2loopback >/dev/null 2>&1; then
+      if sudo modprobe v4l2loopback exclusive_caps=1 max_buffers=2 card_label="Loopback"; then
+        set_status v4l2loopback ok "module loaded"
+      else
+        set_status v4l2loopback present "installed; load failed"
+      fi
+    else
+      set_status v4l2loopback present "installed; no module for running kernel"
+    fi
+  else
+    set_status v4l2loopback err "zypper"
+  fi
+}
+
+flatpak_install_user() {
+  local app="$1" friendly="$2"
+  if flatpak info --user "$app" >/dev/null 2>&1; then
+    set_status "$friendly" present "Flatpak user"
+    return 0
+  fi
+  if flatpak install -y --user flathub "$app"; then
+    set_status "$friendly" ok "Flatpak user"
+  else
+    # maybe installed system-wide?
+    if flatpak info --system "$app" >/dev/null 2>&1; then
+      set_status "$friendly" present "Flatpak system"
+    else
+      set_status "$friendly" err "Flatpak"
+      return 1
+    fi
+  fi
+}
+
+install_flatpaks() {
+  echo -e "${BLUE}==> Installing Proton tools & Heroic via Flatpak (user scope)${RESET}"
+  # ensure flatpak and flathub (user)
+  if ! have flatpak; then
+    case "$(detect_pkg)" in
+      suse)   sudo zypper -n in -y flatpak || true ;;
+      ubuntu) sudo apt-get update -y || true; sudo apt-get install -y flatpak || true ;;
+      fedora) sudo dnf install -y flatpak || true ;;
+      arch)   sudo pacman -Syu --noconfirm flatpak || true ;;
+    esac
+  fi
+  if ! flatpak remotes --user | grep -q '^flathub'; then
+    flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo || true
+  fi
+
+  flatpak_install_user net.davidotek.pupgui2 "ProtonUp-Qt" || true
+  flatpak_install_user com.vysp3r.ProtonPlus "ProtonPlus" || true
+  flatpak_install_user com.heroicgameslauncher.hgl "Heroic" || true
+}
+
+# ================= Main =================
+echo -e "${BLUE}==> Distro detection: $(detect_pkg)${RESET}"
+case "$(detect_pkg)" in
+  suse)
+    suse_refresh
+    suse_install_native
+    install_flatpaks
+    ;;
+  ubuntu|fedora|arch)
+    echo -e "${YELLOW}Cross-distro paths exist, but this run only tweaked for openSUSE in this build.${RESET}"
+    ;;
+  *)
+    echo -e "${RED}Unsupported distro (no known package manager).${RESET}"
+    ;;
+esac
+
+# configs (lightweight, idempotent)
+echo -e "${BLUE}==> Overlays: none${RESET}"
+# MangoHud
+mkdir -p "${REAL_HOME}/.config/MangoHud"
+if [[ ! -s "${REAL_HOME}/.config/MangoHud/MangoHud.conf" ]]; then
+  cat > "${REAL_HOME}/.config/MangoHud/MangoHud.conf" <<'CFG'
+fps_limit=0
+position=top-left
+cfg
+CFG
 fi
-echo "Done."
-[31m████████╗███╗   ██╗[0m
-[31m╚══██╔══╝████╗  ██║[0m
-[31m   ██║   ██╔██╗ ██║[0m
-[31m   ██║   ██║╚██╗██║[0m
-[31m   ██║   ██║ ╚████║[0m
-[31m   ╚═╝   ╚═╝  ╚═══╝[0m
-[34m----------------------------------------------------------[0m
-[34m   Team-Nocturnal.com Universal Gaming Setup by XsMagical[0m
-[34m----------------------------------------------------------[0m
-==> openSUSE: Ensuring Packman & refreshing repositories
-==> openSUSE: Releasing PackageKit lock (non-interactive)
-The flag y is not known.
-==> openSUSE: Releasing PackageKit lock (non-interactive)
-The flag y is not known.
-==> openSUSE: Releasing PackageKit lock (non-interactive)
-The flag y is not known.
-==> openSUSE: Releasing PackageKit lock (non-interactive)
-The flag y is not known.
-==> Installing core gaming packages (Steam, Lutris, Wine, Vulkan, etc.)
-==> openSUSE: Releasing PackageKit lock (non-interactive)
-The flag y is not known.
-==> openSUSE: Releasing PackageKit lock (non-interactive)
-The flag y is not known.
-==> openSUSE: Releasing PackageKit lock (non-interactive)
-The flag y is not known.
-==> openSUSE: Releasing PackageKit lock (non-interactive)
-The flag y is not known.
-==> openSUSE: Releasing PackageKit lock (non-interactive)
-The flag y is not known.
-==> openSUSE: Releasing PackageKit lock (non-interactive)
-The flag y is not known.
-==> Installing ProtonUp-Qt (Flatpak, user scope)
-Looking for matches…
-Skipping: net.davidotek.pupgui2/x86_64/stable is already installed
-==> Installing Heroic (Flatpak)
-Looking for matches…
-Remote ‘flathub’ found in multiple installations:
+# GameMode
+mkdir -p "${REAL_HOME}/.config"
+if [[ ! -s "${REAL_HOME}/.config/gamemode.ini" ]]; then
+  cat > "${REAL_HOME}/.config/gamemode.ini" <<'CFG'
+[general]
+renice=10
+CFG
+fi
 
-   1) system
-   2) user
+# Mark natives as present if commands exist (final sanity pass)
+have steam && set_status steam present || true
+have lutris && set_status lutris present || true
+have gamescope && set_status gamescope present || true
+have mangohud && set_status mangohud present || true
+have vulkaninfo && set_status vulkaninfo present || true
+have gamemoded && set_status gamemoded present || true
+have wine && set_status wine present || true
+have winetricks && set_status winetricks present || true
+have obs && set_status obs present || true
+have discord && set_status discord present || true
 
-Which do you want to use (0 to abort)? [0-2]: 0
-error: No remote chosen to resolve ‘flathub’ which exists in multiple installations
-Looking for matches…
-Skipping: com.heroicgameslauncher.hgl/x86_64/stable is already installed
-==> Installing ProtonPlus (Flatpak, user scope)
-Looking for matches…
-Skipping: com.vysp3r.ProtonPlus/x86_64/stable is already installed
-==> Installing GOverlay (native)
-==> openSUSE: Releasing PackageKit lock (non-interactive)
-The flag y is not known.
-==> Overlays: none
-==> MangoHud config created
-==> GameMode config created
-----------------------------------------------------------
- Install Status Summary
-----------------------------------------------------------
-✅ steam: Present
-✅ lutris: Present
-✅ gamescope: Present
-✅ mangohud: Present
-✅ vulkaninfo: Present
-✅ gamemoded: Present
-✅ wine: Present
-✅ winetricks: Present
-✅ obs: Present
-✅ discord: Present
-✅ ProtonUp-Qt (Flatpak): Present
-✅ ProtonPlus (Flatpak): Present
-✅ GOverlay: Present
-✅ v4l2loopback: Present
-----------------------------------------------------------
-Log saved to: /root/scripts/logs/gaming_20250815_232741.log
-Done.
-/home/xs/scripts/universal_gaming_setup.sh: line 403: $'\E[31m████████╗███╗': command not found
+print_summary
