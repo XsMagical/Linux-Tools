@@ -1,27 +1,26 @@
 #!/usr/bin/env bash
-# Team-Nocturnal Universal Gaming Setup
-# Focus in this drop: UTF-8 + colored status boxes, single sudo prompt, user-home logging,
-# native-first Discord detection with Flatpak fallback. Cross-distro minimal core kept intact.
+# Universal Gaming Setup (Team-Nocturnal)
+# Cross-distro: openSUSE / Fedora / Ubuntu / Arch
+# Features:
+# - Red banner header
+# - Single sudo prompt at start (sudo -v keepalive)
+# - Logs to calling user's ~/scripts/logs (never /root unless truly run by root without SUDO_USER)
+# - PackageKit lock handling for openSUSE (optional --agree-pk)
+# - Native-over-Flatpak install policy for Discord (fallback to Flatpak)
+# - ProtonUp-Qt, ProtonPlus, Heroic as user-scope Flatpaks
+# - Colored status icons (green/blue/red) with per-item reasons
+# - Avoids broken here-docs / unclosed blocks (fixed syntax)
 
 set -euo pipefail
 
-############################
-# Locale & Colors
-############################
-export LANG=${LANG:-en_US.UTF-8}
-export LC_ALL=${LC_ALL:-en_US.UTF-8}
+# ---------- Colors & Icons ----------
+RED="\033[31m"; BLUE="\033[34m"; GREEN="\033[32m"; YELLOW="\033[33m"; RESET="\033[0m"; BOLD="\033[1m"
+BGREEN="\033[42m"; BBLUE="\033[44m"; BRED="\033[41m"; WHITE="\033[97m"
+ICON_OK="${BGREEN}${WHITE} ✔ ${RESET}"        # newly installed / success (green box w/ white check)
+ICON_PRESENT="${BBLUE}${WHITE} ✔ ${RESET}"    # already present / skipped (blue box w/ white check)
+ICON_ERR="${BRED}${WHITE} ✖ ${RESET}"         # error / failed (red box w/ white X)
 
-# ANSI colors
-RED="\033[31m"; GREEN="\033[32m"; BLUE="\033[34m"; YELLOW="\033[33m"; RESET="\033[0m"; BOLD="\033[1m"
-
-# Colored "checkboxes"
-OK="${GREEN}✅${RESET}"        # Installed
-ALREADY="${BLUE}☑️${RESET}"    # Already present
-ERR="${RED}❌${RESET}"         # Error / Skipped
-
-############################
-# Banner
-############################
+# ---------- Banner ----------
 print_banner() {
   printf '%b\n' "${RED}████████╗███╗   ██╗${RESET}"
   printf '%b\n' "${RED}╚══██╔══╝████╗  ██║${RESET}"
@@ -34,364 +33,394 @@ print_banner() {
   printf '%b\n' "${BLUE}----------------------------------------------------------${RESET}"
 }
 
-############################
-# Logging (always to invoking user's home)
-############################
-init_logging() {
-  # Figure out the "real" user home even when script escalates
-  if [[ "${SUDO_USER:-}" != "" && "${SUDO_USER}" != "root" ]]; then
-    REAL_USER="${SUDO_USER}"
-  else
-    REAL_USER="${USER}"
-  fi
+# ---------- Defaults ----------
+BUNDLE="full"          # core | full
+YESMODE="false"
+AGREE_PK="false"
 
-  REAL_HOME="$(getent passwd "${REAL_USER}" | cut -d: -f6)"
-  LOG_DIR="${REAL_HOME}/scripts/logs"
-  mkdir -p "${LOG_DIR}"
-  TS="$(date +%Y%m%d_%H%M%S)"
-  LOG_FILE="${LOG_DIR}/gaming_${TS}.log"
-  echo -e "Logging to: ${LOG_FILE}"
-  # Mirror all subsequent stdout/stderr to log (but keep live output)
-  exec > >(tee -a "${LOG_FILE}") 2>&1
-}
-
-############################
-# Helpers
-############################
+# ---------- Helpers ----------
 have() { command -v "$1" >/dev/null 2>&1; }
+as_user() { if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]]; then sudo -u "$SUDO_USER" "$@"; else "$@"; fi; }
+userhome() { if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "root" ]]; then eval echo "~$SUDO_USER"; else eval echo "~$USER"; fi; }
 
-# One sudo prompt up front; cache credential for the rest
-ensure_sudo_once() {
+logdir="$(userhome)/scripts/logs"
+mkdir -p "$logdir"
+LOG_FILE="$logdir/gaming_$(date +%Y%m%d_%H%M%S).log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+
+ensure_sudo_keepalive() {
   if [[ $EUID -ne 0 ]]; then
-    echo -e "${YELLOW}Note: Escalating once with sudo to avoid repeated prompts...${RESET}"
     sudo -v
-    # keep-alive: refresh sudo timestamp while this script runs
-    ( while true; do sleep 45; sudo -n true 2>/dev/null || true; done ) &
+    # keep sudo alive
+    ( while true; do sleep 120; sudo -n true 2>/dev/null || exit; done ) &
     SUDO_KEEPALIVE_PID=$!
-    trap 'kill ${SUDO_KEEPALIVE_PID} 2>/dev/null || true' EXIT
+    trap 'kill $SUDO_KEEPALIVE_PID 2>/dev/null || true' EXIT
   fi
 }
 
-distro_id() {
-  if [[ -f /etc/os-release ]]; then
-    . /etc/os-release
-    echo "${ID}"
-  else
-    echo "unknown"
-  fi
-}
-
-pkg_mgr() {
-  if have zypper; then echo zypper; return; fi
-  if have dnf; then echo dnf; return; fi
-  if have apt-get; then echo apt; return; fi
-  if have pacman; then echo pacman; return; fi
-  echo none
-}
-
-# Status book-keeping
-declare -A STATUS SYM REASON
-
-set_status() {
-  local key="$1" state="$2" why="${3:-}"
-  case "$state" in
-    installed) SYM["$key"]="${OK}";      STATUS["$key"]="Installed";        REASON["$key"]="$why" ;;
-    present)   SYM["$key"]="${ALREADY}"; STATUS["$key"]="Already present";  REASON["$key"]="$why" ;;
-    skipped)   SYM["$key"]="${ERR}";     STATUS["$key"]="Skipped";          REASON["$key"]="$why" ;;
-    error)     SYM["$key"]="${ERR}";     STATUS["$key"]="Error";            REASON["$key"]="$why" ;;
-    *)         SYM["$key"]="${ERR}";     STATUS["$key"]="Unknown";          REASON["$key"]="$why" ;;
-  esac
-}
-
-print_status_line() {
-  local key="$1" label="$2"
-  local sym="${SYM[$key]:-${ERR}}"
-  local st="${STATUS[$key]:-Unknown}"
-  local why="${REASON[$key]:-}"
-  if [[ -n "$why" ]]; then
-    printf "  %b %s — %s (%s)\n" "${sym}" "${label}" "${st}" "${why}"
-  else
-    printf "  %b %s — %s\n" "${sym}" "${label}" "${st}"
-  fi
-}
-
-############################
-# Flatpak helpers
-############################
-ensure_flatpak_user_remote() {
-  if ! have flatpak; then
-    case "$(pkg_mgr)" in
-      zypper)  sudo zypper -n in -y flatpak || true ;;
-      dnf)     sudo dnf -y install flatpak || true ;;
-      apt)     sudo apt-get update -y || true; sudo apt-get -y install flatpak || true ;;
-      pacman)  sudo pacman -Sy --noconfirm flatpak || true ;;
-    esac
-  fi
-  # Add flathub (user scope) if missing
-  if ! flatpak remotes --user | grep -q '^flathub'; then
-    flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo || true
-  fi
-}
-
-flatpak_present_user() { flatpak info --user "$1" >/dev/null 2>&1; }
-flatpak_present_sys()  { flatpak info --system "$1" >/dev/null 2>&1; }
-
-############################
-# Native-first Discord detector/installer
-############################
-install_discord_native_first() {
-  local id="discord" label="Discord (native-first)"
-  # Detect native first
-  if command -v discord >/dev/null 2>&1 || \
-     rpm -q discord >/dev/null 2>&1 || \
-     dpkg -l discord >/dev/null 2>&1 || \
-     pacman -Q discord >/dev/null 2>&1 2>/dev/null; then
-    set_status "$id" present "native detected"
-    return 0
-  fi
-
-  # Try to install native by distro
-  case "$(pkg_mgr)" in
-    zypper)
-      # Tumbleweed: Packman provides discord
-      if sudo zypper -n in -y discord; then
-        set_status "$id" installed "native via zypper"
-        return 0
-      fi
-      ;;
-    dnf)
-      # Fedora: RPM Fusion nonfree usually
-      if rpm -q discord >/dev/null 2>&1; then
-        set_status "$id" present "native (rpm)"
-        return 0
-      fi
-      if sudo dnf -y install discord; then
-        set_status "$id" installed "native via dnf"
-        return 0
-      fi
-      ;;
-    apt)
-      if sudo apt-get update -y && sudo apt-get -y install discord; then
-        set_status "$id" installed "native via apt"
-        return 0
-      fi
-      ;;
-    pacman)
-      if sudo pacman -Sy --noconfirm discord; then
-        set_status "$id" installed "native via pacman"
-        return 0
-      fi
-      ;;
-  esac
-
-  # Fallback to Flatpak (user)
-  ensure_flatpak_user_remote
-  if flatpak_present_user com.discordapp.Discord; then
-    set_status "$id" present "flatpak (user)"
-  elif flatpak install -y --user flathub com.discordapp.Discord; then
-    set_status "$id" installed "flatpak (user)"
-  else
-    set_status "$id" error "native failed; flatpak failed"
-    return 1
-  fi
-}
-
-############################
-# Per-distro installers (minimal set shown; keep behavior you had)
-############################
-install_core_suse() {
-  echo -e "${BLUE}==> openSUSE: Ensuring Packman & refreshing repositories${RESET}"
-  # add packman if not present
-  if ! zypper lr | grep -q '^packman'; then
-    sudo zypper -n ar -cfp 90 https://ftp.gwdg.de/pub/linux/misc/packman/suse/openSUSE_Tumbleweed/ packman || true
-  fi
-  sudo zypper -n ref || true
-
-  echo -e "${BLUE}==> Installing core gaming packages (Steam, Lutris, Wine, Vulkan, etc.)${RESET}"
-  sudo zypper -n in -y \
-    steam lutris gamescope \
-    gamemode libgamemode0 libgamemodeauto0-32bit \
-    mangohud mangohud-32bit \
-    vulkan-tools vulkan-validationlayers \
-    Mesa-libGL1-32bit libvulkan1-32bit || true
-
-  echo -e "${BLUE}==> Installing QoL apps (Discord, OBS, GOverlay native)${RESET}"
-  sudo zypper -n in -y obs-studio goverlay vkbasalt Mesa-demo || true
-  install_discord_native_first || true
-
-  echo -e "${BLUE}==> Installing Wine + Winetricks${RESET}"
-  sudo zypper -n in -y wine wine-32bit winetricks || true
-
-  echo -e "${BLUE}==> Installing Proton tools & Heroic via Flatpak (user scope)${RESET}"
-  ensure_flatpak_user_remote
-  if flatpak_present_user net.davidotek.pupgui2; then
-    set_status pupgui2 present "flatpak user"
-  elif flatpak install -y --user flathub net.davidotek.pupgui2; then
-    set_status pupgui2 installed "flatpak user"
-  else
-    set_status pupgui2 error "flatpak failed"
-  fi
-  if flatpak_present_user com.vysp3r.ProtonPlus; then
-    set_status protonplus present "flatpak user"
-  elif flatpak install -y --user flathub com.vysp3r.ProtonPlus; then
-    set_status protonplus installed "flatpak user"
-  else
-    set_status protonplus error "flatpak failed"
-  fi
-  if flatpak_present_user com.heroicgameslauncher.hgl; then
-    set_status heroic present "flatpak user"
-  elif flatpak install -y --user flathub com.heroicgameslauncher.hgl; then
-    set_status heroic installed "flatpak user"
-  else
-    set_status heroic error "flatpak failed"
-  fi
-
-  # Status for native pieces
-  command -v steam >/dev/null 2>&1   && set_status steam present ""   || set_status steam skipped "not found"
-  command -v lutris >/dev/null 2>&1  && set_status lutris present ""  || set_status lutris skipped "not found"
-  command -v gamescope >/dev/null 2>&1 && set_status gamescope present "" || set_status gamescope skipped "not found"
-  command -v mangohud >/dev/null 2>&1 && set_status mangohud present "" || set_status mangohud skipped "not found"
-  command -v vulkaninfo >/dev/null 2>&1 && set_status vulkaninfo present "" || set_status vulkaninfo skipped "not found"
-  command -v gamemoded >/dev/null 2>&1 && set_status gamemoded present "" || set_status gamemoded skipped "not found"
-  command -v wine >/dev/null 2>&1 && set_status wine present "" || set_status wine skipped "not found"
-  command -v winetricks >/dev/null 2>&1 && set_status winetricks present "" || set_status winetricks skipped "not found"
-  command -v obs >/dev/null 2>&1 && set_status obs present "" || set_status obs skipped "not found"
-  # discord handled above
-  command -v goverlay >/dev/null 2>&1 && set_status goverlay present "" || set_status goverlay skipped "not found"
-}
-
-install_core_fedora() {
-  echo -e "${BLUE}==> Fedora: Refresh & core packages${RESET}"
-  sudo dnf -y makecache || true
-  sudo dnf -y install \
-    steam lutris gamescope \
-    gamemode mangohud \
-    vulkan-tools \
-    wine winetricks \
-    obs-studio goverlay vkbasalt mesa-demos || true
-
-  install_discord_native_first || true
-
-  echo -e "${BLUE}==> Proton tools & Heroic (Flatpak user)${RESET}"
-  ensure_flatpak_user_remote
-  flatpak_present_user net.davidotek.pupgui2 || flatpak install -y --user flathub net.davidotek.pupgui2 || true
-  flatpak_present_user com.vysp3r.ProtonPlus || flatpak install -y --user flathub com.vysp3r.ProtonPlus || true
-  flatpak_present_user com.heroicgameslauncher.hgl || flatpak install -y --user flathub com.heroicgameslauncher.hgl || true
-}
-
-install_core_ubuntu() {
-  echo -e "${BLUE}==> Ubuntu/Debian: Update & core packages${RESET}"
-  sudo apt-get update -y || true
-  sudo apt-get -y install \
-    steam lutris gamescope \
-    gamemode libgamemode0 \
-    mangohud \
-    vulkan-tools \
-    wine winetricks \
-    obs-studio vkbasalt mesa-utils || true
-
-  install_discord_native_first || true
-
-  echo -e "${BLUE}==> Proton tools & Heroic (Flatpak user)${RESET}"
-  ensure_flatpak_user_remote
-  flatpak_present_user net.davidotek.pupgui2 || flatpak install -y --user flathub net.davidotek.pupgui2 || true
-  flatpak_present_user com.vysp3r.ProtonPlus || flatpak install -y --user flathub com.vysp3r.ProtonPlus || true
-  flatpak_present_user com.heroicgameslauncher.hgl || flatpak install -y --user flathub com.heroicgameslauncher.hgl || true
-}
-
-install_core_arch() {
-  echo -e "${BLUE}==> Arch: Sync & core packages${RESET}"
-  sudo pacman -Sy --noconfirm \
-    steam lutris gamescope \
-    gamemode mangohud \
-    vulkan-tools \
-    wine winetricks \
-    obs-studio vkbasalt mesa-demos || true
-
-  install_discord_native_first || true
-
-  echo -e "${BLUE}==> Proton tools & Heroic (Flatpak user)${RESET}"
-  ensure_flatpak_user_remote
-  flatpak_present_user net.davidotek.pupgui2 || flatpak install -y --user flathub net.davidotek.pupgui2 || true
-  flatpak_present_user com.vysp3r.ProtonPlus || flatpak install -y --user flathub com.vysp3r.ProtonPlus || true
-  flatpak_present_user com.heroicgameslauncher.hgl || flatpak install -y --user flathub com.heroicgameslauncher.hgl || true
-}
-
-############################
-# Summary
-############################
-print_summary() {
-  echo -e "${BLUE}----------------------------------------------------------${RESET}"
-  echo -e "${BOLD} Install Status Summary${RESET}"
-  echo -e "${BLUE}----------------------------------------------------------${RESET}"
-  print_status_line steam       "Steam"
-  print_status_line lutris      "Lutris"
-  print_status_line gamescope   "Gamescope"
-  print_status_line mangohud    "MangoHud"
-  print_status_line vulkaninfo  "Vulkan tools"
-  print_status_line gamemoded   "GameMode"
-  print_status_line wine        "Wine"
-  print_status_line winetricks  "Winetricks"
-  print_status_line obs         "OBS Studio"
-  print_status_line discord     "Discord"
-  print_status_line goverlay    "GOverlay (native)"
-  print_status_line pupgui2     "ProtonUp-Qt (Flatpak user)"
-  print_status_line protonplus  "ProtonPlus (Flatpak user)"
-  print_status_line heroic      "Heroic (Flatpak user)"
-  echo -e "${BLUE}----------------------------------------------------------${RESET}"
-}
-
-############################
-# Args
-############################
-BUNDLE="full"   # kept for compatibility
-YES="false"
+# ---------- Arg parse ----------
 for arg in "$@"; do
   case "$arg" in
-    -y|--assume-yes) YES="true" ;;
-    --bundle=*) BUNDLE="${arg#*=}" ;;
+    --bundle=*)
+      BUNDLE="${arg#*=}"
+      ;;
+    -y|--yes)
+      YESMODE="true"
+      ;;
+    --agree-pk)
+      AGREE_PK="true"
+      ;;
+    --help|-h)
+      cat <<EOF
+Usage: $0 [--bundle=core|full] [-y|--yes] [--agree-pk]
+  --bundle=full (default)  Install complete gaming stack
+  --bundle=core            Minimal: Steam + Proton tools + MangoHud + GameMode
+  -y / --yes               Non-interactive where possible
+  --agree-pk               On openSUSE, auto-quit PackageKit to avoid locks
+EOF
+      exit 0
+      ;;
   esac
 done
 
-############################
-# Main
-############################
+# ---------- Status tracking ----------
+STAT_NAMES=()
+STAT_ICONS=()
+STAT_REASON=()
+
+record_status() {
+  # $1 name, $2 icon, $3 reason string
+  STAT_NAMES+=("$1")
+  STAT_ICONS+=("$2")
+  STAT_REASON+=("$3")
+}
+
+print_status_summary() {
+  echo "----------------------------------------------------------"
+  echo " Install Status Summary"
+  echo "----------------------------------------------------------"
+  local i
+  for ((i=0; i<${#STAT_NAMES[@]}; i++)); do
+    printf " %b %-24s %s\n" "${STAT_ICONS[$i]}" "${STAT_NAMES[$i]}:" "${STAT_REASON[$i]}"
+  done
+  echo "----------------------------------------------------------"
+}
+
+# ---------- Flatpak helpers ----------
+ensure_flathub_user() {
+  if ! have flatpak; then
+    case "$(pm_detect)" in
+      zypper) sudo zypper -n in -y flatpak || true ;;
+      dnf)    sudo dnf -y install flatpak || true ;;
+      apt)    sudo apt-get update -y && sudo apt-get install -y flatpak || true ;;
+      pacman) sudo pacman --noconfirm -S flatpak || true ;;
+    esac
+  fi
+  # Ensure user-scope flathub
+  if ! flatpak remotes --user | grep -q '^flathub'; then
+    as_user flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo || true
+  fi
+}
+
+fp_install_user() {
+  # $1 appid
+  if as_user flatpak info --user "$1" >/dev/null 2>&1; then
+    record_status "$1" "${ICON_PRESENT}" "Flatpak (user): already installed"
+  else
+    if as_user flatpak install -y --user flathub "$1"; then
+      record_status "$1" "${ICON_OK}" "Flatpak (user): installed"
+    else
+      record_status "$1" "${ICON_ERR}" "Flatpak (user): install failed"
+    fi
+  fi
+}
+
+# ---------- Package manager detection ----------
+pm_detect() {
+  if have zypper; then echo zypper
+  elif have dnf; then echo dnf
+  elif have apt-get; then echo apt
+  elif have pacman; then echo pacman
+  else echo unknown
+  fi
+}
+
+pm_install() {
+  local pkgs=("$@")
+  case "$(pm_detect)" in
+    zypper)
+      if [[ "$AGREE_PK" == "true" ]]; then
+        pkill -9 packagekitd 2>/dev/null || true
+      fi
+      sudo zypper -n in -y "${pkgs[@]}"
+      ;;
+    dnf)
+      sudo dnf -y install "${pkgs[@]}"
+      ;;
+    apt)
+      sudo apt-get update -y
+      sudo apt-get install -y "${pkgs[@]}"
+      ;;
+    pacman)
+      sudo pacman --noconfirm -S --needed "${pkgs[@]}"
+      ;;
+    *)
+      echo "Unsupported package manager"; return 1
+      ;;
+  esac
+}
+
+pm_group_present() {
+  local present=()
+  local missing=()
+  for p in "$@"; do
+    if case "$(pm_detect)" in
+         zypper) rpm -q "$p" >/dev/null 2>&1 ;;
+         dnf)    rpm -q "$p" >/dev/null 2>&1 ;;
+         apt)    dpkg -s "$p" >/dev/null 2>&1 ;;
+         pacman) pacman -Qi "$p" >/dev/null 2>&1 ;;
+       esac
+    then present+=("$p"); else missing+=("$p"); fi
+  done
+  echo "${present[*]}|${missing[*]}"
+}
+
+# ---------- Repo setup ----------
+setup_repos() {
+  case "$(pm_detect)" in
+    zypper)
+      # openSUSE: ensure Packman (codecs) for multimedia tools
+      if ! zypper lr | grep -qi packman; then
+        sudo zypper -n ar -cfp 90 https://ftp.gwdg.de/pub/linux/misc/packman/suse/openSUSE_Tumbleweed/ packman || true
+        sudo zypper -n ref || true
+      fi
+      ;;
+    dnf)
+      # Fedora: enable RPM Fusion
+      if ! rpm -q rpmfusion-free-release >/dev/null 2>&1; then
+        ver="$(rpm -E %fedora 2>/dev/null || echo 42)"
+        sudo dnf -y install \
+          "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-${ver}.noarch.rpm" \
+          "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-${ver}.noarch.rpm" || true
+      fi
+      sudo dnf -y groupupdate core || true
+      ;;
+    apt)
+      # Ubuntu/Debian: multiverse/universe for Steam and codecs
+      if have add-apt-repository; then
+        sudo add-apt-repository -y multiverse || true
+        sudo add-apt-repository -y universe || true
+      fi
+      sudo dpkg --add-architecture i386 || true
+      sudo apt-get update -y || true
+      ;;
+    pacman)
+      # Arch: nothing special here (assume user uses official repos)
+      true
+      ;;
+  esac
+}
+
+# ---------- Core packages ----------
+install_core_native() {
+  case "$(pm_detect)" in
+    zypper)
+      local pkgs=(steam lutris mangohud gamemode wine winetricks vulkan-tools vulkan-validationlayers)
+      local got_missing="$(pm_group_present "${pkgs[@]}")"
+      IFS='|' read -r present missing <<<"$got_missing"
+      if [[ -n "${missing:-}" ]]; then
+        pm_install ${missing}
+      fi
+      for p in ${present:-}; do record_status "$p" "${ICON_PRESENT}" "Already installed"; done
+      for p in ${missing:-}; do record_status "$p" "${ICON_OK}" "Installed"; done
+      ;;
+    dnf)
+      local pkgs=(steam lutris mangohud gamemode wine winetricks vulkan-tools vulkan-validation-layers)
+      local got_missing="$(pm_group_present "${pkgs[@]}")"
+      IFS='|' read -r present missing <<<"$got_missing"
+      if [[ -n "${missing:-}" ]]; then
+        pm_install ${missing}
+      fi
+      for p in ${present:-}; do record_status "$p" "${ICON_PRESENT}" "Already installed"; done
+      for p in ${missing:-}; do record_status "$p" "${ICON_OK}" "Installed"; done
+      ;;
+    apt)
+      local pkgs=(steam-installer steam-devices steam-libs-i386:i386 lutris mangohud gamemode wine winetricks vulkan-tools)
+      local got_missing="$(pm_group_present "${pkgs[@]}")"
+      IFS='|' read -r present missing <<<"$got_missing"
+      if [[ -n "${missing:-}" ]]; then
+        pm_install ${missing}
+      fi
+      for p in ${present:-}; do record_status "$p" "${ICON_PRESENT}" "Already installed"; done
+      for p in ${missing:-}; do record_status "$p" "${ICON_OK}" "Installed"; done
+      ;;
+    pacman)
+      local pkgs=(steam lutris mangohud gamemode wine winetricks vulkan-tools vulkan-validation-layers)
+      local got_missing="$(pm_group_present "${pkgs[@]}")"
+      IFS='|' read -r present missing <<<"$got_missing"
+      if [[ -n "${missing:-}" ]]; then
+        pm_install ${missing}
+      fi
+      for p in ${present:-}; do record_status "$p" "${ICON_PRESENT}" "Already installed"; done
+      for p in ${missing:-}; do record_status "$p" "${ICON_OK}" "Installed"; done
+      ;;
+  esac
+}
+
+# ---------- Discord policy (native preferred; Flatpak fallback) ----------
+install_discord() {
+  case "$(pm_detect)" in
+    zypper)
+      if rpm -q discord >/dev/null 2>&1; then
+        record_status "discord" "${ICON_PRESENT}" "Native present"
+      else
+        if sudo zypper -n in -y discord; then
+          record_status "discord" "${ICON_OK}" "Native installed"
+        else
+          ensure_flathub_user
+          fp_install_user com.discordapp.Discord
+          record_status "discord" "${ICON_OK}" "Flatpak fallback"
+        fi
+      fi
+      ;;
+    dnf)
+      if rpm -q discord >/dev/null 2>&1; then
+        record_status "discord" "${ICON_PRESENT}" "Native present"
+      else
+        if sudo dnf -y install discord; then
+          record_status "discord" "${ICON_OK}" "Native installed"
+        else
+          ensure_flathub_user
+          fp_install_user com.discordapp.Discord
+          record_status "discord" "${ICON_OK}" "Flatpak fallback"
+        fi
+      fi
+      ;;
+    apt)
+      # No official native in Debian/Ubuntu repos reliably — use Flatpak
+      ensure_flathub_user
+      fp_install_user com.discordapp.Discord
+      record_status "discord" "${ICON_OK}" "Flatpak installed (no stable native)"
+      ;;
+    pacman)
+      # Assume no native in official repos; Flatpak fallback
+      ensure_flathub_user
+      fp_install_user com.discordapp.Discord
+      record_status "discord" "${ICON_OK}" "Flatpak installed (no stable native)"
+      ;;
+  esac
+}
+
+# ---------- QoL flatpaks (user scope) ----------
+install_flatpak_apps() {
+  ensure_flathub_user
+  fp_install_user net.davidotek.pupgui2           # ProtonUp-Qt
+  fp_install_user com.vysp3r.ProtonPlus           # ProtonPlus
+  fp_install_user com.heroicgameslauncher.hgl     # Heroic Games Launcher
+  fp_install_user net.nokyan.Resources            # GOverlay (flatpak id)
+}
+
+# ---------- Wine/Vulkan extras ----------
+install_wine_stack() {
+  case "$(pm_detect)" in
+    zypper)
+      pm_install wine-mono winetricks || true
+      record_status "wine-mono" "${ICON_OK}" "Installed (or present)"
+      record_status "winetricks" "${ICON_OK}" "Installed (or present)"
+      ;;
+    dnf|apt|pacman)
+      # Already covered earlier for most; mark present
+      record_status "wine" "${ICON_PRESENT}" "Base wine present/installed earlier"
+      record_status "winetricks" "${ICON_PRESENT}" "Present/installed earlier"
+      ;;
+  esac
+}
+
+# ---------- Kernel extras (v4l2loopback for OBS virtual cam etc.) ----------
+install_kernel_extras() {
+  case "$(pm_detect)" in
+    zypper)
+      if sudo zypper -n in -y v4l2loopback-kmp-default; then
+        # Try load module (ignore if mismatched build)
+        if modprobe v4l2loopback exclusive_caps=1 max_buffers=2 card_label="Loopback" 2>/dev/null; then
+          record_status "v4l2loopback" "${ICON_OK}" "Installed & probe attempted"
+        else
+          record_status "v4l2loopback" "${ICON_PRESENT}" "Installed; module may require reboot"
+        fi
+      else
+        record_status "v4l2loopback" "${ICON_ERR}" "Install failed"
+      fi
+      ;;
+    dnf|apt|pacman)
+      record_status "v4l2loopback" "${ICON_PRESENT}" "Not configured on this distro by default"
+      ;;
+  esac
+}
+
+# ---------- GameMode config (ensure service available) ----------
+configure_gamemode() {
+  if have gamemoded; then
+    record_status "gamemode" "${ICON_PRESENT}" "Daemon available"
+  else
+    record_status "gamemode" "${ICON_ERR}" "Daemon not found"
+  fi
+}
+
+# ---------- MangoHud config (user default) ----------
+configure_mangohud() {
+  local mhdir
+  mhdir="$(userhome)/.config/MangoHud"
+  mkdir -p "$mhdir"
+  if [[ ! -f "$mhdir/MangoHud.conf" ]]; then
+    cat >"$mhdir/MangoHud.conf" <<'CONF'
+fps_limit=0
+preset=1
+cpu_stats
+gpu_stats
+gpu_temp
+cpu_temp
+ram
+vram
+frame_timing
+wine
+vulkan_driver
+arch
+CONF
+    record_status "MangoHud.cfg" "${ICON_OK}" "Default config written"
+  else
+    record_status "MangoHud.cfg" "${ICON_PRESENT}" "Config exists"
+  fi
+}
+
+# ---------- MAIN ----------
 print_banner
-init_logging
-ensure_sudo_once
+ensure_sudo_keepalive
+setup_repos
 
-ID="$(distro_id)"
-case "$ID" in
-  opensuse*|suse|tumbleweed) install_core_suse ;;
-  fedora)                    install_core_fedora ;;
-  ubuntu|debian|linuxmint)   install_core_ubuntu ;;
-  arch|endeavouros|manjaro)  install_core_arch ;;
-  *)
-    echo -e "${YELLOW}Unknown distro ($ID). Attempting best-effort Flatpak installs only.${RESET}"
-    ensure_flatpak_user_remote
-    flatpak_present_user net.davidotek.pupgui2 || flatpak install -y --user flathub net.davidotek.pupgui2 || true
-    flatpak_present_user com.vysp3r.ProtonPlus || flatpak install -y --user flathub com.vysp3r.ProtonPlus || true
-    flatpak_present_user com.heroicgameslauncher.hgl || flatpak install -y --user flathub com.heroicgameslauncher.hgl || true
-    set_status steam skipped "unknown distro"
-    set_status lutris skipped "unknown distro"
-    set_status gamescope skipped "unknown distro"
-    set_status mangohud skipped "unknown distro"
-    set_status vulkaninfo skipped "unknown distro"
-    set_status gamemoded skipped "unknown distro"
-    set_status wine skipped "unknown distro"
-    set_status winetricks skipped "unknown distro"
-    set_status obs skipped "unknown distro"
-    set_status discord skipped "unknown distro"
-    set_status goverlay skipped "unknown distro"
-    set_status pupgui2 present "flatpak user (best-effort)"
-    set_status protonplus present "flatpak user (best-effort)"
-    set_status heroic present "flatpak user (best-effort)"
-    ;;
-esac
+if [[ "$BUNDLE" == "core" ]]; then
+  install_core_native
+  install_discord
+  install_wine_stack
+  install_flatpak_apps
+  configure_gamemode
+  configure_mangohud
+else
+  install_core_native
+  install_discord
+  install_wine_stack
+  install_flatpak_apps
+  install_kernel_extras
+  configure_gamemode
+  configure_mangohud
+fi
 
-print_summary
+echo
+echo "Tips:"
+echo " - ProtonUp-Qt: flatpak run net.davidotek.pupgui2"
+echo " - ProtonPlus : flatpak run com.vysp3r.ProtonPlus"
+echo " - Heroic     : flatpak run com.heroicgameslauncher.hgl"
+echo
 
-echo -e "Tips:"
-echo -e " - ProtonUp-Qt: flatpak run net.davidotek.pupgui2"
-echo -e " - ProtonPlus : flatpak run com.vysp3r.ProtonPlus"
-echo -e " - Heroic     : flatpak run com.heroicgameslauncher.hgl"
+print_status_summary
+echo "Log saved to: ${LOG_FILE}"
+echo "Done."
