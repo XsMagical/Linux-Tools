@@ -361,7 +361,7 @@ install_flatpak_apps(){
   fp_install_user net.davidotek.pupgui2 "ProtonUp-Qt"
   fp_install_user com.vysp3r.ProtonPlus "ProtonPlus"
   fp_install_user com.heroicgameslauncher.hgl "Heroic Games Launcher"
-  fp_install_user net.nokyan.Resources "GOverlay"
+  fp_install_user net.nokyan.GOverlay "GOverlay"
 }
 
 # ===== Detect installed Proton versions =====
