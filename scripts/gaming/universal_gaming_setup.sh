@@ -1,4 +1,71 @@
 #!/usr/bin/env bash
+# === Team Nocturnal helper: install GOverlay (native-first, with openSUSE repo add, then Flatpak) ===
+# === Team Nocturnal helper: install GOverlay (native-first, with openSUSE repo add, then Flatpak) ===
+_tn_install_goverlay() {
+  # If already present (native)
+  if command -v goverlay >/dev/null 2>&1; then
+    record_status "GOverlay" "${ICON_PRESENT}" "Already installed (native)"
+    return 0
+  fi
+
+  # Try native per distro. For openSUSE, add games:tools if needed.
+  if command -v dnf >/dev/null 2>&1; then
+    if sudo dnf -y install goverlay; then
+      record_status "GOverlay" "${ICON_OK}" "Installed via DNF"
+      return 0
+    fi
+
+  elif command -v zypper >/dev/null 2>&1; then
+    if sudo zypper -n install goverlay; then
+      record_status "GOverlay" "${ICON_OK}" "Installed via Zypper"
+      return 0
+    fi
+    # If not found, add the appropriate OBS repo for games:tools
+    local repo=""
+    if grep -qi tumbleweed /etc/os-release; then
+      repo="https://download.opensuse.org/repositories/games:tools/openSUSE_Tumbleweed/games:tools.repo"
+    elif grep -qi slowroll /etc/os-release; then
+      repo="https://download.opensuse.org/repositories/games:tools/openSUSE_Slowroll/games:tools.repo"
+    else
+      repo="https://download.opensuse.org/repositories/games:tools/16.0/games:tools.repo"
+    fi
+    sudo zypper -n addrepo "$repo" || true
+    sudo zypper -n refresh || true
+    if sudo zypper -n install goverlay; then
+      record_status "GOverlay" "${ICON_OK}" "Installed via Zypper (games:tools)"
+      return 0
+    fi
+
+  elif command -v pacman >/dev/null 2>&1; then
+    if sudo pacman -S --noconfirm --needed goverlay; then
+      record_status "GOverlay" "${ICON_OK}" "Installed via Pacman"
+      return 0
+    fi
+
+  elif command -v apt-get >/dev/null 2>&1; then
+    sudo apt-get update -y || true
+    if sudo apt-get install -y goverlay; then
+      record_status "GOverlay" "${ICON_OK}" "Installed via APT"
+      return 0
+    fi
+  fi
+
+  # Flatpak fallback
+  if command -v flatpak >/dev/null 2>&1; then
+    flatpak remote-add --if-not-exists --user flathub https://flathub.org/repo/flathub.flatpakrepo || true
+    if flatpak install -y --user flathub net.nokyan.GOverlay; then
+      if flatpak info --user net.nokyan.GOverlay >/dev/null 2>&1; then
+        record_status "GOverlay" "${ICON_OK}" "Installed via Flatpak (user)"
+        return 0
+      fi
+    fi
+  fi
+
+  record_status "GOverlay" "${ICON_ERR}" "Install failed (native + Flatpak)"
+  return 1
+}
+
+
 # Team Nocturnal — Universal Gaming Setup (cross-distro) by XsMagical
 # Distros: openSUSE (zypper), Fedora/RHEL (dnf/dnf5), Ubuntu/Debian (apt), Arch/Manjaro (pacman)
 # Status icons (DO NOT CHANGE): green box ✔ (done/installed), blue box ✔ (already/ok), red box ✖ (failed)
@@ -28,7 +95,7 @@ print_banner() {
 BUNDLE="full"            # core|full
 YESMODE="false"
 AGREE_PK="false"         # openSUSE: auto-kill PackageKit
-SKIP_UPGRADE="false"     # allow skipping upgrade
+SKIP_UPGRADE="true"     # allow skipping upgrade
 
 # ===== Helpers =====
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -56,7 +123,8 @@ for arg in "$@"; do
     -y|--yes)       YESMODE="true";;
     --agree-pk)     AGREE_PK="true";;
     --skip-upgrade) SKIP_UPGRADE="true";;
-    --help|-h)
+        --systemupdate) SKIP_UPGRADE="false";;
+--help|-h)
       cat <<EOF
 Usage: $0 [--bundle=core|full] [-y|--yes] [--agree-pk] [--skip-upgrade]
 EOF
@@ -236,58 +304,76 @@ pm_update_full(){
   case "$pm" in
     zypper)
       [[ "$AGREE_PK" == "true" ]] && pkill -9 packagekitd 2>/dev/null || true
-      if sudo zypper -n up -y; then
-        if [[ "${avail:-0}" -gt 0 ]]; then
-          record_status "system-upgrade (zypper)" "${ICON_OK}" "Upgraded ${avail} package(s)"
+      # Detect stream: Tumbleweed/Slowroll => dup, Leap => up
+      local use_dup="false"
+      if grep -qiE 'tumbleweed|slowroll' /etc/os-release; then
+        use_dup="true"
+      fi
+      if [[ "$use_dup" == "true" ]]; then
+        if sudo zypper -n dup --allow-vendor-change -y; then
+          if [[ "${avail:-0}" -gt 0 ]]; then
+            record_status "system-update (zypper dup)" "${ICON_OK}" "Upgraded ${avail} package(s)"
+          else
+            record_status "system-update (zypper dup)" "${ICON_PRESENT}" "Already up to date"
+          fi
+          return 0
         else
-          record_status "system-upgrade (zypper)" "${ICON_PRESENT}" "Already up to date"
+          record_status "system-update (zypper dup)" "${ICON_ERR}" "zypper dup failed"
+          return 1
         fi
-        return 0
       else
-        record_status "system-upgrade (zypper)" "${ICON_ERR}" "zypper up failed"
-        return 1
+        if sudo zypper -n up -y; then
+          if [[ "${avail:-0}" -gt 0 ]]; then
+            record_status "system-update (zypper up)" "${ICON_OK}" "Upgraded ${avail} package(s)"
+          else
+            record_status "system-update (zypper up)" "${ICON_PRESENT}" "Already up to date"
+          fi
+          return 0
+        else
+          record_status "system-update (zypper up)" "${ICON_ERR}" "zypper up failed"
+          return 1
+        fi
       fi
       ;;
     dnf)
       if sudo dnf -y upgrade --refresh; then
         if [[ "${avail:-0}" -gt 0 ]]; then
-          record_status "system-upgrade (dnf)" "${ICON_OK}" "Upgraded ${avail} package(s)"
+          record_status "system-update (dnf)" "${ICON_OK}" "Upgraded ${avail} package(s)"
         else
-          record_status "system-upgrade (dnf)" "${ICON_PRESENT}" "Already up to date"
+          record_status "system-update (dnf)" "${ICON_PRESENT}" "Already up to date"
         fi
         return 0
       else
-        record_status "system-upgrade (dnf)" "${ICON_ERR}" "dnf upgrade failed"
-        return 1
-      fi
-      ;;
-    apt)
-      if sudo apt-get dist-upgrade -y; then
-        if [[ "${avail:-0}" -gt 0 ]]; then
-          record_status "system-upgrade (apt)" "${ICON_OK}" "Upgraded ${avail} package(s)"
-        else
-          record_status "system-upgrade (apt)" "${ICON_PRESENT}" "Already up to date"
-        fi
-        return 0
-      else
-        record_status "system-upgrade (apt)" "${ICON_ERR}" "dist-upgrade failed"
+        record_status "system-update (dnf)" "${ICON_ERR}" "dnf upgrade failed"
         return 1
       fi
       ;;
     pacman)
       if sudo pacman -Syu --noconfirm; then
         if [[ "${avail:-0}" -gt 0 ]]; then
-          record_status "system-upgrade (pacman)" "${ICON_OK}" "Upgraded ${avail} package(s)"
+          record_status "system-update (pacman)" "${ICON_OK}" "Upgraded ${avail} package(s)"
         else
-          record_status "system-upgrade (pacman)" "${ICON_PRESENT}" "Already up to date"
+          record_status "system-update (pacman)" "${ICON_PRESENT}" "Already up to date"
         fi
         return 0
       else
-        record_status "system-upgrade (pacman)" "${ICON_ERR}" "pacman -Syu failed"
+        record_status "system-update (pacman)" "${ICON_ERR}" "pacman -Syu failed"
         return 1
       fi
       ;;
-    *) record_status "system-upgrade (unknown)" "${ICON_ERR}" "Unsupported PM"; return 1;;
+    apt)
+      if sudo apt-get update -y && sudo apt-get dist-upgrade -y; then
+        if [[ "${avail:-0}" -gt 0 ]]; then
+          record_status "system-update (apt)" "${ICON_OK}" "Upgraded ${avail} package(s)"
+        else
+          record_status "system-update (apt)" "${ICON_PRESENT}" "Already up to date"
+        fi
+        return 0
+      else
+        record_status "system-update (apt)" "${ICON_ERR}" "apt dist-upgrade failed"
+        return 1
+      fi
+      ;;
   esac
 }
 
@@ -361,7 +447,7 @@ install_flatpak_apps(){
   fp_install_user net.davidotek.pupgui2 "ProtonUp-Qt"
   fp_install_user com.vysp3r.ProtonPlus "ProtonPlus"
   fp_install_user com.heroicgameslauncher.hgl "Heroic Games Launcher"
-  fp_install_user net.nokyan.GOverlay "GOverlay"
+  _tn_install_goverlay
 }
 
 # ===== Detect installed Proton versions =====
@@ -507,7 +593,7 @@ pm_refresh_repos
 if [[ "$SKIP_UPGRADE" == "false" ]]; then
   pm_update_full || true
 else
-  record_status "system-upgrade (skipped)" "${ICON_PRESENT}" "User requested --skip-upgrade"
+  true
 fi
 
 # 4) Install stack
