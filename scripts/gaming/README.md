@@ -65,6 +65,7 @@ chmod +x universal_gaming_setup.sh
 | **Lite** | Core tools only | `./universal_gaming_setup.sh --bundle=lite -y` |
 | **Normal** | Core + Steam, Lutris, Heroic, Discord, Proton tools | `./universal_gaming_setup.sh --bundle=normal -y` |
 | **Full** | Everything in Normal **plus** OBS, GOverlay, Gamescope, v4l2loopback | `./universal_gaming_setup.sh --bundle=full -y` |
+| **Full+System Update** | Everything in Full **plus** Full system update| `./universal_gaming_setup.sh --bundle=full --systemupdate -y` |
 
 ---
 
